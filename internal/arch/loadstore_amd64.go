@@ -20,8 +20,11 @@ import "unsafe"
 // - Acquire Load = regular memory access (TSO provides acquire semantics)
 // - Release Store = regular memory access (TSO provides release semantics)
 //
-// These pure Go implementations can be inlined by the compiler,
-// eliminating function call overhead for ~3x performance improvement.
+// These pure Go implementations compile to plain MOV instructions and are
+// inlinable. The intrinsics compiler intercepts them at SSA level to ensure
+// atomic semantics. Without intrinsics, these are plain memory accesses —
+// correct on x86-64 TSO hardware but not recognized as atomic by the Go
+// memory model or race detector.
 
 // =============================================================================
 // 32-bit Load operations

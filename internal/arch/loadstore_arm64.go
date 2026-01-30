@@ -19,8 +19,12 @@ import "unsafe"
 // Pure Go `return *addr` compiles to LDR (relaxed load).
 // Pure Go `*addr = val` compiles to STR (relaxed store).
 //
-// These pure Go implementations can be inlined by the compiler,
-// providing significant performance improvement over assembly calls.
+// These pure Go relaxed load/store implementations compile to plain LDR/STR
+// instructions and are inlinable. The intrinsics compiler intercepts them at
+// SSA level to ensure atomic semantics. Without intrinsics, these are plain
+// memory accesses — hardware-atomic for aligned data on ARM64 but not
+// recognized by the Go memory model or race detector. Acquire/Release
+// orderings remain in assembly (LDAR/STLR cannot be generated from pure Go).
 //
 // IMPORTANT: Acquire loads and Release stores MUST stay in assembly
 // because Go cannot generate LDAR/STLR instructions from pure Go.
