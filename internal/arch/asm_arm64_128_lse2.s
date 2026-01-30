@@ -105,7 +105,9 @@ TEXT ·SwapUint128Release(SB), NOSPLIT, $0-40
 	MOVD	newHi+16(FP), R3
 	// Read current value (LDP is atomic with LSE2)
 	LDP	(R8), (R0, R1)
-	// Release barrier once before store attempts
+	// Release barrier placed outside the CASPD loop: a failed CASPD only
+	// performs a load (no store occurred), so release ordering is not needed
+	// for failed attempts. One barrier before the first attempt suffices.
 	DMB	$0xA
 swap128_rel_retry:
 	MOVD	R0, R4
@@ -124,7 +126,9 @@ TEXT ·SwapUint128AcqRel(SB), NOSPLIT, $0-40
 	MOVD	newHi+16(FP), R3
 	// Read current value (LDP is atomic with LSE2)
 	LDP	(R8), (R0, R1)
-	// Release barrier once before store attempts
+	// Release barrier placed outside the CASPD loop: a failed CASPD only
+	// performs a load (no store occurred), so release ordering is not needed
+	// for failed attempts. One barrier before the first attempt suffices.
 	DMB	$0xA
 swap128_aqrl_retry:
 	MOVD	R0, R4
@@ -133,6 +137,8 @@ swap128_aqrl_retry:
 	CMP	R0, R4
 	CCMP	EQ, R1, R5, $0
 	BNE	swap128_aqrl_retry
+	// Acquire barrier after successful swap ensures visibility of the
+	// swapped value and all prior writes from the releasing thread.
 	DMB	$0x9
 	MOVD	R4, oldLo+24(FP)
 	MOVD	R5, oldHi+32(FP)
