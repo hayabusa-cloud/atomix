@@ -54,7 +54,7 @@ Los métodos por defecto (sin sufijo de ordenamiento) usan:
 - Operaciones Store: Relaxed
 - Operaciones lectura-modificación-escritura: AcqRel
 
-**Nota:** sync/atomic usa acquire para Load y release para Store (consistencia secuencial en x86). atomix usa Relaxed por defecto para máximo rendimiento en arquitecturas débilmente ordenadas. Use `LoadAcquire`/`StoreRelease` cuando requiera ordenamiento equivalente a sync/atomic.
+**Nota:** sync/atomic usa acquire para Load y release para Store (consistencia secuencial en x86). atomix usa Relaxed por defecto, que se mapea a instrucciones distintas en arquitecturas débilmente ordenadas (ej. LDR vs LDAR en ARM64). Use `LoadAcquire`/`StoreRelease` cuando requiera ordenamiento equivalente a sync/atomic.
 
 ### Cuándo Usar Cada Ordenamiento
 
@@ -248,14 +248,14 @@ Las arquitecturas no soportadas usan `sync/atomic`, que proporciona consistencia
 
 ## Fundamento del Diseño
 
-### ¿Por Qué Ordenamiento de Memoria Explícito?
+### Ordenamiento de Memoria Explícito
 
-1. **Rendimiento en arquitecturas débiles**: ARM64/RISC-V pueden usar instrucciones más débiles (más rápidas) cuando no se necesita ordenamiento completo
+1. **Selección de instrucciones en arquitecturas débiles**: ARM64/RISC-V seleccionan instrucciones diferentes según los requisitos de ordenamiento
 2. **Documentación**: El sufijo de ordenamiento documenta la intención de sincronización
 3. **Portabilidad**: El código especifica explícitamente requisitos en lugar de depender de garantías específicas de arquitectura
 4. **Corrección**: Hace las decisiones de ordenamiento de memoria explícitas y revisables
 
-### ¿Por Qué No Solo Usar sync/atomic?
+### Comparación con sync/atomic
 
 sync/atomic proporciona consistencia secuencial, que es:
 - **Suficiente** para la mayoría de casos de uso
@@ -263,10 +263,10 @@ sync/atomic proporciona consistencia secuencial, que es:
 - **Simple** de razonar
 
 Usar atomix cuando:
-- Construir estructuras de datos lock-free de alto rendimiento
+- Construir estructuras de datos lock-free
 - Interoperar con kernel o interfaces de hardware (io_uring, memoria compartida)
 - Portar código C/C++ con ordenamiento de memoria explícito
-- Apuntar a ARM64/RISC-V donde el ordenamiento más débil proporciona beneficio medible
+- Apuntar a ARM64/RISC-V donde el ordenamiento explícito controla la selección de instrucciones
 
 ## Soporte de Plataformas
 
@@ -282,7 +282,55 @@ Usar atomix cuando:
 
 ## Intrínsecos del Compilador
 
-Para aprovechar el rendimiento completo, atomix puede integrarse con el compilador Go para emitir instrucciones atómicas inline, eliminando la sobrecarga de llamadas a funciones. Ver [intrinsics.md](./intrinsics.md) para el enfoque de implementación.
+atomix proporciona un compilador Go personalizado que emite instrucciones atómicas inline en lugar de llamadas a funciones. Esto transforma las llamadas a funciones en instrucciones CPU únicas, eliminando la sobrecarga de llamadas.
+
+### Inicio Rápido
+
+```bash
+# Instalar el compilador con intrínsecos personalizados
+make install-compiler
+
+# Compilar con intrínsecos
+make build
+
+# Probar con intrínsecos
+make test
+
+# Verificar que los intrínsecos se aplican
+make verify
+```
+
+### Qué Hace el Compilador
+
+El compilador personalizado añade operaciones SSA para intrínsecos de atomix:
+
+| Operación | x86-64 | ARM64 |
+|-----------|--------|-------|
+| Load (Relaxed) | `MOV` | `LDR` |
+| Load (Acquire) | `MOV` | `LDAR` |
+| Store (Relaxed) | `MOV` | `STR` |
+| Store (Release) | `MOV` | `STLR` |
+| Add (AcqRel) | `LOCK XADD` | `LDADDAL` |
+| CAS | `LOCK CMPXCHG` | `CASAL` |
+
+**Optimización x86-64 TSO:** Los stores Release usan `MOV` plano en lugar de `XCHG`, aprovechando el Total Store Ordering de x86-64 que proporciona semántica release implícita para todos los stores.
+
+### Configuración Manual del Compilador
+
+Si prefieres configuración manual sobre el Makefile:
+
+```bash
+# Clonar el compilador con intrínsecos
+git clone --branch atomix https://github.com/hayabusa-cloud/go.git ~/github.com/go
+
+# Compilar el compilador
+cd ~/github.com/go/src && ./make.bash
+
+# Usar para atomix
+GOROOT=~/github.com/go ~/github.com/go/bin/go build ./...
+```
+
+Ver [intrinsics.md](./intrinsics.md) para documentación detallada de implementación.
 
 ## Licencia
 

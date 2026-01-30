@@ -54,7 +54,7 @@ go get code.hybscloud.com/atomix
 - Store 操作：Relaxed
 - 読み取り-変更-書き込み操作：AcqRel
 
-**注意：** sync/atomic は Load に acquire、Store に release セマンティクスを使用する（x86 では逐次一貫性）。atomix はウィークオーダーアーキテクチャで最高性能を得るため Relaxed をデフォルトとする。sync/atomic 相当のオーダリングが必要な場合は `LoadAcquire`/`StoreRelease` を使用すること。
+**注意：** sync/atomic は Load に acquire、Store に release セマンティクスを使用する（x86 では逐次一貫性）。atomix は Relaxed をデフォルトとし、ウィークオーダーアーキテクチャで異なる命令にマッピングされる（例：ARM64 の LDR と LDAR）。sync/atomic 相当のオーダリングが必要な場合は `LoadAcquire`/`StoreRelease` を使用すること。
 
 ### 各オーダリングの使用場面
 
@@ -248,14 +248,14 @@ LoongArch は DBAR（データバリア）命令を使用：
 
 ## 設計理念
 
-### なぜ明示的メモリオーダリングか？
+### 明示的メモリオーダリング
 
-1. **弱いアーキテクチャでの性能**: ARM64/RISC-V は完全なオーダリングが不要な場合、より弱い（より高速な）命令を使用可能
+1. **弱いアーキテクチャでの命令選択**: ARM64/RISC-V はオーダリング要件に応じて異なる命令を選択
 2. **ドキュメント化**: オーダリングサフィックスが同期意図を文書化
 3. **移植性**: コードがアーキテクチャ固有の保証に依存せず、要件を明示的に指定
 4. **正確性**: メモリオーダリングの決定を明示的かつレビュー可能に
 
-### なぜ sync/atomic だけでは不十分か？
+### sync/atomic との比較
 
 sync/atomic は逐次一貫性を提供し、これは：
 - **十分**: ほとんどのユースケースに対応
@@ -263,10 +263,10 @@ sync/atomic は逐次一貫性を提供し、これは：
 - **シンプル**: 理解しやすい
 
 atomix を使用する場面：
-- 高性能ロックフリーデータ構造の構築
+- ロックフリーデータ構造の構築
 - カーネルやハードウェアインターフェース（io_uring、共有メモリ）との相互運用
 - 明示的メモリオーダリングを持つ C/C++ コードの移植
-- ARM64/RISC-V をターゲットとし、弱いオーダリングが測定可能な利点をもたらす場合
+- ARM64/RISC-V をターゲットとし、明示的なオーダリングで命令選択を制御する場合
 
 ## プラットフォームサポート
 
@@ -282,7 +282,55 @@ atomix を使用する場面：
 
 ## コンパイラ組み込み関数
 
-性能を引き出すには、atomix を Go コンパイラと統合してインラインアトミック命令を直接生成し、関数呼び出しオーバーヘッドを排除できる。実装アプローチは [intrinsics.md](./intrinsics.md) を参照。
+atomix はカスタマイズされた Go コンパイラを提供し、関数呼び出しの代わりにインラインアトミック命令を直接生成する。これにより関数呼び出しが単一の CPU 命令に変換され、呼び出しオーバーヘッドが排除される。
+
+### クイックスタート
+
+```bash
+# 組み込み関数対応コンパイラをインストール
+make install-compiler
+
+# 組み込み関数対応コンパイラでビルド
+make build
+
+# 組み込み関数対応コンパイラでテスト
+make test
+
+# 組み込み関数が適用されているか検証
+make verify
+```
+
+### コンパイラの機能
+
+カスタマイズされたコンパイラは atomix 用の SSA 操作を追加：
+
+| 操作 | x86-64 | ARM64 |
+|------|--------|-------|
+| Load (Relaxed) | `MOV` | `LDR` |
+| Load (Acquire) | `MOV` | `LDAR` |
+| Store (Relaxed) | `MOV` | `STR` |
+| Store (Release) | `MOV` | `STLR` |
+| Add (AcqRel) | `LOCK XADD` | `LDADDAL` |
+| CAS | `LOCK CMPXCHG` | `CASAL` |
+
+**x86-64 TSO 最適化：** Release ストアは `XCHG` ではなく通常の `MOV` を使用。x86-64 の Total Store Ordering がすべてのストアに暗黙の release セマンティクスを提供するため。
+
+### 手動コンパイラセットアップ
+
+Makefile を使用しない場合の手動セットアップ：
+
+```bash
+# 組み込み関数対応コンパイラをクローン
+git clone --branch atomix https://github.com/hayabusa-cloud/go.git ~/github.com/go
+
+# コンパイラをビルド
+cd ~/github.com/go/src && ./make.bash
+
+# atomix で使用
+GOROOT=~/github.com/go ~/github.com/go/bin/go build ./...
+```
+
+詳細な実装ドキュメントは [intrinsics.md](./intrinsics.md) を参照。
 
 ## ライセンス
 

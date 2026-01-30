@@ -54,7 +54,7 @@ go get code.hybscloud.com/atomix
 - 存储操作：Relaxed
 - 读-修改-写操作：AcqRel
 
-**注意：** sync/atomic 的 Load 使用 acquire 语义，Store 使用 release 语义（x86 上为顺序一致性）。atomix 默认使用 Relaxed 以在弱序架构上获得最佳性能。需要与 sync/atomic 等效的语义时，请使用 `LoadAcquire`/`StoreRelease`。
+**注意：** sync/atomic 的 Load 使用 acquire 语义，Store 使用 release 语义（x86 上为顺序一致性）。atomix 默认使用 Relaxed，在弱序架构上映射为不同的指令（如 ARM64 上 LDR 与 LDAR）。需要与 sync/atomic 等效的语义时，请使用 `LoadAcquire`/`StoreRelease`。
 
 ### 各内存序的使用场景
 
@@ -248,14 +248,14 @@ LoongArch 使用 DBAR（数据屏障）指令：
 
 ## 设计原理
 
-### 为什么需要显式内存序？
+### 显式内存序
 
-1. **弱序架构上的性能**: ARM64/RISC-V 可以在不需要完全顺序时使用更弱（更快）的指令
+1. **弱序架构上的指令选择**: ARM64/RISC-V 根据内存序需求选择不同的指令
 2. **文档化**: 内存序后缀记录同步意图
 3. **可移植性**: 代码显式指定需求，而非依赖架构特定保证
 4. **正确性**: 使内存序决策显式且可审查
 
-### 为什么不直接用 sync/atomic？
+### 与 sync/atomic 的比较
 
 sync/atomic 提供顺序一致性，这是：
 - **足够的** 适用于大多数场景
@@ -263,10 +263,10 @@ sync/atomic 提供顺序一致性，这是：
 - **简单的** 易于理解
 
 使用 atomix 当：
-- 构建高性能无锁数据结构
+- 构建无锁数据结构
 - 与内核或硬件接口交互（io_uring、共享内存）
 - 移植有显式内存序的 C/C++ 代码
-- 目标是 ARM64/RISC-V，弱序能带来可测量的收益
+- 目标是 ARM64/RISC-V，显式内存序控制指令选择
 
 ## 平台支持
 
@@ -282,7 +282,55 @@ sync/atomic 提供顺序一致性，这是：
 
 ## 编译器内联
 
-为充分发挥性能，可将 atomix 与 Go 编译器集成，直接生成内联原子指令，消除函数调用开销。实现方案详见 [intrinsics.md](./intrinsics.md)。
+atomix 提供定制的 Go 编译器，直接生成内联原子指令代替函数调用。这将函数调用转换为单条 CPU 指令，消除调用开销。
+
+### 快速开始
+
+```bash
+# 安装定制的内联编译器
+make install-compiler
+
+# 使用内联编译器构建
+make build
+
+# 使用内联编译器测试
+make test
+
+# 验证内联是否生效
+make verify
+```
+
+### 编译器功能
+
+定制编译器为 atomix 添加 SSA 操作：
+
+| 操作 | x86-64 | ARM64 |
+|------|--------|-------|
+| Load (Relaxed) | `MOV` | `LDR` |
+| Load (Acquire) | `MOV` | `LDAR` |
+| Store (Relaxed) | `MOV` | `STR` |
+| Store (Release) | `MOV` | `STLR` |
+| Add (AcqRel) | `LOCK XADD` | `LDADDAL` |
+| CAS | `LOCK CMPXCHG` | `CASAL` |
+
+**x86-64 TSO 优化：** Release 存储使用普通 `MOV` 而非 `XCHG`，利用 x86-64 的全存储顺序（TSO）为所有存储提供隐式 release 语义。
+
+### 手动编译器安装
+
+如果不使用 Makefile，可手动安装：
+
+```bash
+# 克隆内联编译器
+git clone --branch atomix https://github.com/hayabusa-cloud/go.git ~/github.com/go
+
+# 构建编译器
+cd ~/github.com/go/src && ./make.bash
+
+# 用于 atomix
+GOROOT=~/github.com/go ~/github.com/go/bin/go build ./...
+```
+
+详细实现文档见 [intrinsics.md](./intrinsics.md)。
 
 ## 许可证
 
