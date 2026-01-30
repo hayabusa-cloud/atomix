@@ -1577,7 +1577,6 @@ func TestPaddedTypes(t *testing.T) {
 	// Verify padded types have expected size (cache line = 64 bytes typically)
 	var i32p atomix.Int32Padded
 	var i64p atomix.Int64Padded
-	var u128p atomix.Uint128Padded
 
 	// Ensure they work
 	i32p.Store(42)
@@ -1590,6 +1589,9 @@ func TestPaddedTypes(t *testing.T) {
 		t.Fatal("Int64Padded failed")
 	}
 
+	// Uint128Padded requires 16-byte alignment; use PlaceAlignedUint128
+	buf := make([]byte, 32)
+	_, u128p := atomix.PlaceAlignedUint128(buf, 0)
 	u128p.Store(0xABCD, 0x1234)
 	lo, hi := u128p.Load()
 	if lo != 0xABCD || hi != 0x1234 {
