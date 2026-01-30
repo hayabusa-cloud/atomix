@@ -1,12 +1,14 @@
 # Compiler Intrinsics
 
-Reference documentation for adding Go compiler intrinsics to atomix. Intrinsics replace function calls with inline CPU instructions, eliminating call overhead (stack frame, register spilling, prologue/epilogue).
+Reference documentation for Go compiler intrinsics in atomix. Intrinsics replace function calls with inline CPU instructions, eliminating call overhead (stack frame, register spilling, prologue/epilogue).
 
-**Status:** Future work. This document describes the approach for compiler integration.
+**Status:** Implemented for AMD64 and ARM64 (64-bit operations). RISC-V and LoongArch use assembly stubs. 128-bit operations use assembly stubs on all architectures.
 
 ## Instruction Mapping
 
 ### ARM64 (LSE)
+
+**Status: Intrinsified (LSE-guarded)**
 
 ARM64 Large System Extensions provide atomic instructions with explicit memory ordering suffixes:
 
@@ -15,16 +17,11 @@ ARM64 Large System Extensions provide atomic instructions with explicit memory o
 | Load | `LDR` | `LDAR` | — | — |
 | Store | `STR` | — | `STLR` | — |
 | Add | `LDADD` | `LDADDA` | `LDADDL` | `LDADDAL` |
-| Sub | `LDADD` (neg) | `LDADDA` (neg) | `LDADDL` (neg) | `LDADDAL` (neg) |
 | CAS | `CAS` | `CASA` | `CASL` | `CASAL` |
 | Swap | `SWP` | `SWPA` | `SWPL` | `SWPAL` |
 | And | `LDCLR` † | `LDCLRA` † | `LDCLRL` † | `LDCLRAL` † |
 | Or | `LDSET` | `LDSETA` | `LDSETL` | `LDSETAL` |
 | Xor | `LDEOR` | `LDEORA` | `LDEORL` | `LDEORAL` |
-| Max (signed) | `LDSMAX` | `LDSMAXA` | `LDSMAXL` | `LDSMAXAL` |
-| Max (unsigned) | `LDUMAX` | `LDUMAXA` | `LDUMAXL` | `LDUMAXAL` |
-| Min (signed) | `LDSMIN` | `LDSMINA` | `LDSMINL` | `LDSMINAL` |
-| Min (unsigned) | `LDUMIN` | `LDUMINA` | `LDUMINL` | `LDUMINAL` |
 
 † **And operation note:** `LDCLR` clears bits: `old = *addr; *addr = old & ~operand`. To implement `And(mask)`, pass `~mask` to LDCLR.
 
@@ -34,11 +31,13 @@ ARM64 Large System Extensions provide atomic instructions with explicit memory o
 - `L`: Release (store ordering)
 - `AL`: Acquire-Release (full RMW ordering)
 
-**Return value note:** All LSE atomic RMW instructions (`LDADD`, `SWP`, `LDSET`, etc.) return the **old** value. atomix's `Add`/`Sub`/`Inc`/`Dec` return the **new** value, so the intrinsic must compute `new = old + delta` after the instruction. `Swap`/`And`/`Or`/`Xor`/`Max`/`Min` return the old value directly (no conversion needed).
+**Return value note:** All LSE atomic RMW instructions (`LDADD`, `SWP`, `LDSET`, etc.) return the **old** value. atomix's `Add` returns the **new** value, so the intrinsic must compute `new = old + delta` after the instruction. `Swap`/`And`/`Or`/`Xor` return the old value directly (no conversion needed).
 
 **sync/atomic comparison:** Go's sync/atomic uses `AL` variants (sequential consistency). atomix exposes all orderings.
 
 ### x86-64 (TSO)
+
+**Status: Intrinsified (TSO)**
 
 x86-64 Total Store Ordering provides implicit acquire/release. All orderings compile to identical code:
 
@@ -47,19 +46,20 @@ x86-64 Total Store Ordering provides implicit acquire/release. All orderings com
 | Load | `MOV` | Implicit acquire |
 | Store | `MOV` | Implicit release |
 | Add | `LOCK XADD` | Returns old value |
-| Sub | `LOCK XADD` (neg) | Negate operand |
 | CAS | `LOCK CMPXCHG` | RAX = expected |
 | Swap | `XCHG` | Implicit LOCK |
-| And | `LOCK AND` | No old value return ‡ |
-| Or | `LOCK OR` | No old value return ‡ |
-| Xor | `LOCK XOR` | No old value return ‡ |
-| CAS128 | `LOCK CMPXCHG16B` | RDX:RAX, RCX:RBX |
+| And | `LOCK CMPXCHG` loop | CAS loop returns old value ‡ |
+| Or | `LOCK CMPXCHG` loop | CAS loop returns old value ‡ |
+| Xor | `LOCK CMPXCHG` loop | CAS loop returns old value ‡ |
+| CAS128 | `LOCK CMPXCHG16B` | Assembly stub (not yet intrinsified) |
 
-‡ **Bitwise ops note:** x86 `LOCK AND/OR/XOR` don't return the old value. To get old value, use CAS loop or (for Or) `LOCK BTS` per bit.
+‡ **Bitwise ops note:** x86 `LOCK AND/OR/XOR` modify memory but don't return the old value. atomix requires old value return, so the implementation uses a `LOCK CMPXCHG` CAS loop: load current value, compute bitwise result, attempt CAS, retry on failure.
 
-**Return value note:** `LOCK XADD` returns the **old** value. atomix's `Add`/`Sub`/`Inc`/`Dec` return the **new** value, so the intrinsic must compute `new = old + delta` after the instruction.
+**Return value note:** `LOCK XADD` returns the **old** value. atomix's `Add` returns the **new** value, so the intrinsic must compute `new = old + delta` after the instruction.
 
 ### RISC-V (RVWMO)
+
+**Status: Assembly stubs (not yet intrinsified)**
 
 RISC-V provides AMO instructions with `.aq` (acquire) and `.rl` (release) modifiers:
 
@@ -72,15 +72,13 @@ RISC-V provides AMO instructions with `.aq` (acquire) and `.rl` (release) modifi
 | And | `AMOAND.D` | `AMOAND.D.AQ` | `AMOAND.D.RL` | `AMOAND.D.AQRL` |
 | Or | `AMOOR.D` | `AMOOR.D.AQ` | `AMOOR.D.RL` | `AMOOR.D.AQRL` |
 | Xor | `AMOXOR.D` | `AMOXOR.D.AQ` | `AMOXOR.D.RL` | `AMOXOR.D.AQRL` |
-| Max (signed) | `AMOMAX.D` | `AMOMAX.D.AQ` | `AMOMAX.D.RL` | `AMOMAX.D.AQRL` |
-| Max (unsigned) | `AMOMAXU.D` | `AMOMAXU.D.AQ` | `AMOMAXU.D.RL` | `AMOMAXU.D.AQRL` |
-| Min (signed) | `AMOMIN.D` | `AMOMIN.D.AQ` | `AMOMIN.D.RL` | `AMOMIN.D.AQRL` |
-| Min (unsigned) | `AMOMINU.D` | `AMOMINU.D.AQ` | `AMOMINU.D.RL` | `AMOMINU.D.AQRL` |
 | CAS | `LR.D`/`SC.D` | `LR.D.AQ`/`SC.D` | `LR.D`/`SC.D.RL` | `LR.D.AQ`/`SC.D.RL` |
 
-**Return value note:** AMO instructions return the **old** value. atomix's `Add`/`Sub`/`Inc`/`Dec` return the **new** value, requiring post-instruction addition.
+**Return value note:** AMO instructions return the **old** value. atomix's `Add` returns the **new** value, requiring post-instruction addition.
 
 ### LoongArch
+
+**Status: Assembly stubs (not yet intrinsified)**
 
 LoongArch uses `AM*_DB` instructions (DB = double-barrier, sequential consistency) and `DBAR` for explicit barriers:
 
@@ -93,13 +91,9 @@ LoongArch uses `AM*_DB` instructions (DB = double-barrier, sequential consistenc
 | And | `AMAND.D` | `AMAND_DB.D` | `AMAND_DB.D` | `AMAND_DB.D` |
 | Or | `AMOR.D` | `AMOR_DB.D` | `AMOR_DB.D` | `AMOR_DB.D` |
 | Xor | `AMXOR.D` | `AMXOR_DB.D` | `AMXOR_DB.D` | `AMXOR_DB.D` |
-| Max (signed) | `AMMAX.D` | `AMMAX_DB.D` | `AMMAX_DB.D` | `AMMAX_DB.D` |
-| Max (unsigned) | `AMMAX.DU` | `AMMAX_DB.DU` | `AMMAX_DB.DU` | `AMMAX_DB.DU` |
-| Min (signed) | `AMMIN.D` | `AMMIN_DB.D` | `AMMIN_DB.D` | `AMMIN_DB.D` |
-| Min (unsigned) | `AMMIN.DU` | `AMMIN_DB.DU` | `AMMIN_DB.DU` | `AMMIN_DB.DU` |
 | CAS | `LL.D`/`SC.D` | + `DBAR` | + `DBAR` | + `DBAR` |
 
-**Return value note:** AM* instructions return the **old** value. atomix's `Add`/`Sub`/`Inc`/`Dec` return the **new** value, requiring post-instruction addition.
+**Return value note:** AM* instructions return the **old** value. atomix's `Add` returns the **new** value, requiring post-instruction addition.
 
 ---
 
@@ -141,6 +135,7 @@ In `_gen/genericOps.go`, add architecture-independent operations:
 // AtomicAdd64AcqRel already exists as AtomicAdd64
 
 // 128-bit CAS: [ptr, oldLo, oldHi, newLo, newHi, mem] → (Bool, Mem)
+// NOTE: Planned — not yet implemented. Currently uses assembly stubs.
 {name: "AtomicCompareAndSwap128", argLength: 6, typ: "(Bool,Mem)", hasSideEffects: true},
 {name: "AtomicCompareAndSwap128Acquire", argLength: 6, typ: "(Bool,Mem)", hasSideEffects: true},
 {name: "AtomicCompareAndSwap128Release", argLength: 6, typ: "(Bool,Mem)", hasSideEffects: true},
@@ -155,6 +150,8 @@ In `_gen/genericOps.go`, add architecture-independent operations:
 ### Step 2: Define Architecture-Specific Operations
 
 **AMD64** (`_gen/AMD64Ops.go`):
+
+> **128-bit operations below are planned — not yet implemented.** Target instruction: `CMPXCHG16B`.
 
 CMPXCHG16B has fixed register requirements:
 
@@ -191,7 +188,7 @@ cmpxchg16b = regInfo{
     reg: regInfo{inputs: []regMask{gpspsbg, gpg, 0}, outputs: []regMask{gp, 0}},
     resultNotInArgs: true, hasSideEffects: true, faultOnNilArg0: true},
 
-// 128-bit CAS using LDXP/STXP or CASP
+// 128-bit CAS using LDXP/STXP or CASP — Planned, not yet implemented
 {name: "LoweredAtomicCas128", argLength: 6,
     reg: regInfo{
         inputs:  []regMask{gpspsbg, gpg, gpg, gpg, gpg, 0},
@@ -213,6 +210,11 @@ cmpxchg16b = regInfo{
 (AtomicAdd64Acquire ptr val mem) => (LoweredAtomicAdd64 ptr val mem)
 (AtomicAdd64Release ptr val mem) => (LoweredAtomicAdd64 ptr val mem)
 
+// Release atomic stores - use plain MOV (x86 TSO provides store-release ordering)
+(AtomicStoreRel32 ptr val mem) => (MOVLstore ptr val mem)
+(AtomicStoreRel64 ptr val mem) => (MOVQstore ptr val mem)
+
+// Planned — not yet implemented:
 (AtomicCompareAndSwap128 ...) => (LoweredAtomicCas128 ...)
 (AtomicCompareAndSwap128Acquire ...) => (LoweredAtomicCas128 ...)
 (AtomicCompareAndSwap128Release ...) => (LoweredAtomicCas128 ...)
@@ -226,6 +228,11 @@ cmpxchg16b = regInfo{
 (AtomicAdd64Acquire ptr val mem) => (LoweredAtomicAdd64Acquire ptr val mem)
 (AtomicAdd64Release ptr val mem) => (LoweredAtomicAdd64Release ptr val mem)
 
+// Release atomic stores - use STLR (store-release)
+(AtomicStoreRel32 ptr val mem) => (STLRW <types.TypeMem> ptr val mem)
+(AtomicStoreRel64 ptr val mem) => (STLR  <types.TypeMem> ptr val mem)
+
+// Planned — not yet implemented:
 (AtomicCompareAndSwap128 ...) => (LoweredAtomicCas128 ...)
 (AtomicCompareAndSwap128Acquire ...) => (LoweredAtomicCas128Acquire ...)
 (AtomicCompareAndSwap128Release ...) => (LoweredAtomicCas128Release ...)
@@ -234,7 +241,7 @@ cmpxchg16b = regInfo{
 
 ### Step 4: Implement Code Generation
 
-**AMD64** (`amd64/ssa.go`):
+**AMD64** (`amd64/ssa.go`) — *128-bit codegen below is planned, not yet implemented:*
 
 ```go
 case ssa.OpAMD64LoweredAtomicCas128:
@@ -280,6 +287,7 @@ case ssa.OpARM64LoweredAtomicAdd64Release:
     p := s.Prog(arm64.ALDADDL)    // LDADDL (release)
     // ... same operand setup, plus ADD for old → new conversion
 
+// 128-bit CAS — Planned, not yet implemented:
 case ssa.OpARM64LoweredAtomicCas128:
     addr := v.Args[0].Reg()
     oldLo, oldHi := v.Args[1].Reg(), v.Args[2].Reg()
@@ -333,7 +341,7 @@ addF(atomixArch, "AddInt64Acquire",
     },
     sys.ARM64)
 
-// 128-bit CAS (both architectures)
+// 128-bit CAS (both architectures) — Planned, not yet implemented
 addF(atomixArch, "CasUint128",
     func(s *state, n *ir.CallExpr, args []*ssa.Value) *ssa.Value {
         v := s.newValue6(ssa.OpAtomicCompareAndSwap128,
@@ -395,6 +403,182 @@ add("...", "AddInt64Relaxed", ..., sys.ARM64)
 // CORRECT: Using addF() for architecture-specific intrinsics
 addF("...", "AddInt64Relaxed", ..., sys.ARM64)
 ```
+
+---
+
+## Compiler Optimizations
+
+The Go compiler applies several optimizations to atomix intrinsics:
+
+### Constant Folding
+
+Identity operations are optimized to simpler loads at compile time:
+
+| Pattern | Optimization | Rationale |
+|---------|--------------|-----------|
+| `Add(ptr, 0)` | `Load(ptr)` | Adding zero returns current value |
+| `Or(ptr, 0)` | `Load(ptr)` | OR with zero is identity |
+| `And(ptr, ^0)` | `Load(ptr)` | AND with all-ones is identity |
+| `Xor(ptr, 0)` | `Load(ptr)` | XOR with zero is identity |
+
+These rules are applied in the SSA generic rewrite pass before architecture-specific lowering.
+
+### Relaxed Memory Ordering Optimization
+
+On ARM64, relaxed operations use faster instructions:
+
+| Operation | Relaxed | Acquire/Release |
+|-----------|---------|-----------------|
+| Load | `MOV` (plain load) | `LDAR` (load-acquire) |
+| Store | `MOV` (plain store) | `STLR` (store-release) |
+
+**Ordering cost:** `LDAR`/`STLR` enforce ordering constraints that `MOV` does not. The latency difference is microarchitecture-dependent. Use relaxed ordering when no inter-thread visibility guarantees are needed.
+
+On x86-64 (TSO), both relaxed and release stores use plain `MOV`:
+
+| Operation | Relaxed | Release |
+|-----------|---------|---------|
+| Store | `MOV` | `MOV` |
+
+**Rationale:** x86-64 TSO guarantees that all stores have implicit release semantics. A plain `MOV` instruction provides store-release ordering without requiring `XCHG` or `LOCK` prefix. This optimization was implemented via dedicated `AtomicStoreRel32`/`AtomicStoreRel64` SSA operations that lower directly to `MOVLstore`/`MOVQstore`.
+
+### Fence Coalescing
+
+Adjacent memory barriers are merged to eliminate redundant instructions:
+
+**ARM64 DMB coalescing:**
+```
+DMB ISH; DMB ISH → DMB ISH       (duplicate elimination)
+DMB ISH; DMB ISHLD → DMB ISH     (full barrier subsumes acquire)
+DMB ISH; DMB ISHST → DMB ISH     (full barrier subsumes release)
+DMB ISHLD; DMB ISHST → DMB ISH   (acquire + release = full)
+```
+
+**x86-64 MFENCE coalescing:**
+```
+MFENCE; MFENCE → MFENCE          (duplicate elimination)
+```
+
+### LSE Instruction Selection (ARM64)
+
+The atomix intrinsics compiler always emits LSE instructions directly. atomix requires ARMv8.1+ with mandatory LSE support — no runtime detection or LL/SC fallback is generated.
+
+```go
+// From ssagen/intrinsics.go:
+// Always use LSE variant (op1) - atomix requires ARM64 v8.4+
+// with mandatory LSE support. No runtime detection needed.
+```
+
+This differs from Go's `sync/atomic`, which uses `makeAtomicGuardedIntrinsicARM64` with runtime `cpu.ARM64.HasLSE` branching to support pre-LSE hardware. atomix uses a simplified path that emits only LSE instructions.
+
+| Approach | Runtime Check | Instructions Emitted | Target |
+|----------|---------------|---------------------|--------|
+| sync/atomic | Yes (`cpu.ARM64.HasLSE`) | Both LSE and LL/SC | All ARMv8 |
+| atomix | No | LSE only | ARMv8.1+ |
+
+---
+
+## Performance Tips
+
+### 1. Choose Appropriate Memory Ordering
+
+| Use Case | Ordering | ARM64 Cost |
+|----------|----------|------------|
+| Statistics counters | Relaxed | Lowest |
+| Producer-consumer flag | Acquire/Release | Medium |
+| Lock implementation | AcqRel | Highest |
+
+**Rule:** Use the weakest ordering that maintains correctness.
+
+### 2. Prefer Add Over CAS for Counters
+
+```go
+// GOOD: Single instruction (LDADDAL on ARM64, LOCK XADD on x86)
+counter.Add(1)
+
+// AVOID: CAS loop (multiple instructions, retries under contention)
+for {
+    old := counter.Load()
+    if counter.CompareAndSwap(old, old+1) {
+        break
+    }
+}
+```
+
+### 3. Use Relaxed for Thread-Local or Non-Synchronized Access
+
+```go
+// Thread-local counter (no synchronization needed)
+localCount.AddRelaxed(1)
+
+// Periodic flush to shared counter
+sharedCount.AddRelease(localCount.SwapRelaxed(0))
+```
+
+### 4. Batch Operations to Amortize Barrier Cost
+
+```go
+// AVOID: Multiple barriers
+for i := range items {
+    process(items[i])
+    counter.AddAcqRel(1)  // Barrier per iteration
+}
+
+// BETTER: Single barrier
+for i := range items {
+    process(items[i])
+    counter.AddRelaxed(1)
+}
+BarrierAcqRel()  // One barrier at end
+```
+
+### 5. Verify Intrinsics Are Applied
+
+```bash
+# Check for direct instructions (intrinsics working)
+go build -gcflags='-S' . 2>&1 | grep -E 'LDADDAL|SWPAL|LDAR|STLR'
+
+# Check for function calls (intrinsics NOT working)
+go build -gcflags='-S' . 2>&1 | grep 'CALL.*atomix'
+```
+
+If you see `CALL` instructions to atomix functions, intrinsics are not being applied. Possible causes:
+- Wrong Go version (need modified compiler)
+- Indirect function calls (intrinsics only work on direct calls)
+- Generic type instantiation in some cases
+
+### 6. ARM64: Build with GOARM64=v8.1 for Servers
+
+```bash
+# Graviton2/3, Apple M1+, Ampere Altra all support LSE
+GOARM64=v8.1 go build -o app .
+```
+
+This eliminates runtime LSE detection branches and guarantees single-instruction atomics.
+
+---
+
+## Intrinsic Count Summary
+
+| Category | Functions | Breakdown | addF Calls |
+|----------|-----------|-----------|------------|
+| Load | 12 | 6 types × 2 orderings | 12 |
+| Store | 12 | 6 types × 2 orderings | 12 |
+| Add | 20 | 5 types × 4 orderings | 40 |
+| Swap | 24 | 6 types × 4 orderings | 48 |
+| CAS | 24 | 6 types × 4 orderings | 48 |
+| CAX | 24 | 6 types × 4 orderings | 24 |
+| And | 20 | 5 types × 4 orderings | 40 |
+| Or | 20 | 5 types × 4 orderings | 40 |
+| Xor | 20 | 5 types × 4 orderings | 40 |
+| Barriers | 3 | 3 orderings | 6 |
+| **Total** | **179** | | **310** |
+
+**Notes:**
+- "Functions" = unique `internal/arch` functions intrinsified (on both AMD64 and ARM64).
+- "addF Calls" = total registrations in `intrinsics.go` (some register both archs per call, others register separately).
+- Types: Int32, Uint32, Int64, Uint64, Uintptr (5 types). Swap/CAS/CAX add Pointer (6 types).
+- Sub/Inc/Dec are Go-level wrappers over Add; they are not separate intrinsics.
 
 ---
 

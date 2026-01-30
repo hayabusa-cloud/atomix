@@ -91,7 +91,7 @@
 //   - Default (!lse2): LL/SC using LDXP/STXP instructions
 //   - -tags=lse2: CASP instruction (LSE2)
 //
-// LL/SC has lower microarchitectural overhead than CASP in uncontended cases.
+// LL/SC uses LDXP/STXP pair; CASP uses a single instruction.
 // Use -tags=lse2 for ARMv8.4+ hardware with high-contention workloads.
 //
 // # 128-bit Atomics

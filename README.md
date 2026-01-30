@@ -54,7 +54,7 @@ Default methods (no ordering suffix) use:
 - Store operations: Relaxed
 - Read-modify-write operations: AcqRel
 
-**Note:** sync/atomic uses acquire for Load and release for Store (sequential consistency on x86). atomix defaults to Relaxed for maximum performance on weakly-ordered architectures. Use `LoadAcquire`/`StoreRelease` when sync/atomic-equivalent ordering is required.
+**Note:** sync/atomic uses acquire for Load and release for Store (sequential consistency on x86). atomix defaults to Relaxed, which maps to different instructions on weakly-ordered architectures (e.g., LDR vs LDAR on ARM64). Use `LoadAcquire`/`StoreRelease` when sync/atomic-equivalent ordering is required.
 
 ### When to Use Each Ordering
 
@@ -248,14 +248,14 @@ Unsupported architectures use `sync/atomic`, which provides sequential consisten
 
 ## Design Rationale
 
-### Why Explicit Memory Ordering?
+### Explicit Memory Ordering
 
-1. **Performance on weak architectures**: ARM64/RISC-V can use weaker (faster) instructions when full ordering isn't needed
+1. **Instruction selection on weak architectures**: ARM64/RISC-V select different instructions based on ordering requirements
 2. **Documentation**: Ordering suffix documents synchronization intent
 3. **Portability**: Code explicitly specifies requirements rather than relying on architecture-specific guarantees
 4. **Correctness**: Makes memory ordering decisions explicit and reviewable
 
-### Why Not Just Use sync/atomic?
+### Comparison with sync/atomic
 
 sync/atomic provides sequential consistency, which is:
 - **Sufficient** for most use cases
@@ -263,10 +263,10 @@ sync/atomic provides sequential consistency, which is:
 - **Simple** to reason about
 
 Use atomix when:
-- Building high-performance lock-free data structures
+- Building lock-free data structures
 - Interoperating with kernel or hardware interfaces (io_uring, shared memory)
 - Porting C/C++ code with explicit memory ordering
-- Targeting ARM64/RISC-V where weaker ordering provides measurable benefit
+- Targeting ARM64/RISC-V where explicit ordering controls instruction selection
 
 ## Platform Support
 
@@ -282,7 +282,55 @@ Use atomix when:
 
 ## Compiler Intrinsics
 
-To bring out full performance, atomix can be integrated with the Go compiler to emit inline atomic instructions, eliminating function call overhead. See [intrinsics.md](./intrinsics.md) for the implementation approach.
+atomix provides a customized Go compiler that emits inline atomic instructions instead of function calls. This transforms function calls into single CPU instructions, eliminating call overhead.
+
+### Quick Start
+
+```bash
+# Install the intrinsics-customized compiler
+make install-compiler
+
+# Build with intrinsics
+make build
+
+# Test with intrinsics
+make test
+
+# Verify intrinsics are applied
+make verify
+```
+
+### What the Compiler Does
+
+The customized compiler adds SSA operations for atomix intrinsics:
+
+| Operation | x86-64 | ARM64 |
+|-----------|--------|-------|
+| Load (Relaxed) | `MOV` | `LDR` |
+| Load (Acquire) | `MOV` | `LDAR` |
+| Store (Relaxed) | `MOV` | `STR` |
+| Store (Release) | `MOV` | `STLR` |
+| Add (AcqRel) | `LOCK XADD` | `LDADDAL` |
+| CAS | `LOCK CMPXCHG` | `CASAL` |
+
+**x86-64 TSO optimization:** Release stores use plain `MOV` instead of `XCHG`, leveraging x86-64's Total Store Ordering which provides implicit release semantics for all stores.
+
+### Manual Compiler Setup
+
+If you prefer manual setup over the Makefile:
+
+```bash
+# Clone the intrinsics compiler
+git clone --branch atomix https://github.com/hayabusa-cloud/go.git ~/github.com/go
+
+# Build the compiler
+cd ~/github.com/go/src && ./make.bash
+
+# Use for atomix
+GOROOT=~/github.com/go ~/github.com/go/bin/go build ./...
+```
+
+See [intrinsics.md](./intrinsics.md) for detailed implementation documentation.
 
 ## License
 
