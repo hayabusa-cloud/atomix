@@ -5,7 +5,7 @@
 #
 # Prerequisites:
 #   - Git
-#   - Go 1.25+ (for bootstrapping)
+#   - Go 1.26+ (for bootstrapping)
 #   - Linux (or WSL2 on Windows)
 #
 # Usage:

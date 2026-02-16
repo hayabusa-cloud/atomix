@@ -8,7 +8,7 @@
 
 // ARM64 32/64-bit atomic operations using LSE (ARMv8.1+).
 //
-// Go 1.25 supports ordered LSE variants for 32/64-bit operations:
+// Go 1.26 supports ordered LSE variants for 32/64-bit operations:
 //   SWPAD/SWPLD/SWPALD, LDADDAD/LDADDLD/LDADDALD, CASAD/CASLD/CASALD
 //
 // 128-bit operations are in separate files with build tags:

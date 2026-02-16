@@ -34,7 +34,7 @@ val := atomix.Acquire.LoadInt32(&flags)
 go get code.hybscloud.com/atomix
 ```
 
-**Requisitos:** Go 1.25+
+**Requisitos:** Go 1.26+
 
 ## Ordenamiento de Memoria
 
