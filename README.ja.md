@@ -34,7 +34,7 @@ val := atomix.Acquire.LoadInt32(&flags)
 go get code.hybscloud.com/atomix
 ```
 
-**動作要件:** Go 1.25+
+**動作要件:** Go 1.26+
 
 ## メモリオーダリング
 
