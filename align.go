@@ -9,6 +9,10 @@ import "unsafe"
 // CanPlaceAligned4 reports whether a 4-byte aligned value can be placed
 // in p starting at offset off. Returns true if there is sufficient space
 // for alignment padding plus 4 bytes.
+//
+// p must be non-empty. Passing an empty slice panics (no guard).
+// This is intentional to reduce runtime overhead; callers are expected
+// to ensure the slice is valid before calling placement functions.
 func CanPlaceAligned4(p []byte, off int) bool {
 	if off < 0 || off > len(p) {
 		return false
@@ -21,6 +25,8 @@ func CanPlaceAligned4(p []byte, off int) bool {
 // CanPlaceAligned8 reports whether an 8-byte aligned value can be placed
 // in p starting at offset off. Returns true if there is sufficient space
 // for alignment padding plus 8 bytes.
+//
+// p must be non-empty. Passing an empty slice panics (no guard).
 func CanPlaceAligned8(p []byte, off int) bool {
 	if off < 0 || off > len(p) {
 		return false
@@ -33,6 +39,8 @@ func CanPlaceAligned8(p []byte, off int) bool {
 // CanPlaceAligned16 reports whether a 16-byte aligned value can be placed
 // in p starting at offset off. Returns true if there is sufficient space
 // for alignment padding plus 16 bytes.
+//
+// p must be non-empty. Passing an empty slice panics (no guard).
 func CanPlaceAligned16(p []byte, off int) bool {
 	if off < 0 || off > len(p) {
 		return false
@@ -44,6 +52,8 @@ func CanPlaceAligned16(p []byte, off int) bool {
 
 // CanPlaceCacheAligned reports whether a cache-line aligned value of the
 // given size can be placed in p starting at offset off.
+//
+// p must be non-empty. Passing an empty slice panics (no guard).
 func CanPlaceCacheAligned(p []byte, off, size int) bool {
 	if off < 0 || off > len(p) {
 		return false
