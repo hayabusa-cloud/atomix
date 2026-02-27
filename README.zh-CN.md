@@ -149,7 +149,7 @@ buf := make([]byte, 32)
 _, ptr := atomix.PlaceAlignedUint128(buf, 0)
 ptr.Store(lo, hi)
 
-var v atomix.Uint128  // 类型保证对齐
+var v atomix.Uint128  // 需确保该变量放置在 16 字节对齐地址
 v.Store(lo, hi)
 ```
 
