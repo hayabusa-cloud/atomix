@@ -703,6 +703,9 @@ swap128_relaxed_loop:
 	RET
 
 // func SwapUint128Acquire(addr *[16]byte, newLo, newHi uint64) (oldLo, oldHi uint64)
+// 128-bit swap uses LR/SC on lo + plain store on hi, which is inherently
+// non-atomic for the full 128 bits. All ordering variants provide relaxed
+// semantics on riscv64.
 TEXT ·SwapUint128Acquire(SB), NOSPLIT, $0-40
 	JMP	·SwapUint128Relaxed(SB)
 
