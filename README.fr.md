@@ -149,7 +149,7 @@ buf := make([]byte, 32)
 _, ptr := atomix.PlaceAlignedUint128(buf, 0)
 ptr.Store(lo, hi)
 
-var v atomix.Uint128  // Le type assure l'alignement
+var v atomix.Uint128  // S'assurer que cette variable est placée à une adresse alignée sur 16 octets
 v.Store(lo, hi)
 ```
 

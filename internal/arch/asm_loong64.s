@@ -795,8 +795,9 @@ TEXT ·StoreUint128Relaxed(SB), NOSPLIT, $0-24
 	MOVV	hi+16(FP), R6
 store128_relaxed_loop:
 	LLV	(R4), R7
-	SCV	R5, (R4)
-	BEQ	R7, store128_relaxed_loop
+	MOVV	R5, R9
+	SCV	R9, (R4)
+	BEQ	R9, store128_relaxed_loop
 	MOVV	R6, 8(R4)
 	RET
 
@@ -808,8 +809,9 @@ TEXT ·StoreUint128Release(SB), NOSPLIT, $0-24
 	DBAR	$0x12
 store128_rel_loop:
 	LLV	(R4), R7
-	SCV	R5, (R4)
-	BEQ	R7, store128_rel_loop
+	MOVV	R5, R9
+	SCV	R9, (R4)
+	BEQ	R9, store128_rel_loop
 	MOVV	R6, 8(R4)
 	RET
 
@@ -821,14 +823,18 @@ TEXT ·SwapUint128Relaxed(SB), NOSPLIT, $0-40
 swap128_relaxed_loop:
 	LLV	(R4), R7		// load-link old lo
 	MOVV	8(R4), R8		// load old hi
-	SCV	R5, (R4)		// store-cond new lo
-	BEQ	R7, swap128_relaxed_loop
+	MOVV	R5, R9
+	SCV	R9, (R4)		// store-cond new lo
+	BEQ	R9, swap128_relaxed_loop
 	MOVV	R6, 8(R4)		// store new hi
 	MOVV	R7, oldLo+24(FP)
 	MOVV	R8, oldHi+32(FP)
 	RET
 
 // func SwapUint128Acquire(addr *[16]byte, newLo, newHi uint64) (oldLo, oldHi uint64)
+// 128-bit swap uses LL/SC on lo + plain store on hi, which is inherently
+// non-atomic for the full 128 bits. All ordering variants provide relaxed
+// semantics on loong64.
 TEXT ·SwapUint128Acquire(SB), NOSPLIT, $0-40
 	JMP	·SwapUint128Relaxed(SB)
 
@@ -852,8 +858,9 @@ cas128_relaxed_loop:
 	BNE	R9, R5, cas128_relaxed_fail
 	MOVV	8(R4), R10
 	BNE	R10, R6, cas128_relaxed_fail
-	SCV	R7, (R4)
-	BEQ	R7, cas128_relaxed_loop
+	MOVV	R7, R11
+	SCV	R11, (R4)
+	BEQ	R11, cas128_relaxed_loop
 	MOVV	R8, 8(R4)
 	MOVV	$1, R4
 	MOVB	R4, ret+40(FP)
@@ -874,8 +881,9 @@ cas128_acq_loop:
 	BNE	R9, R5, cas128_acq_fail
 	MOVV	8(R4), R10
 	BNE	R10, R6, cas128_acq_fail
-	SCV	R7, (R4)
-	BEQ	R7, cas128_acq_loop
+	MOVV	R7, R11
+	SCV	R11, (R4)
+	BEQ	R11, cas128_acq_loop
 	MOVV	R8, 8(R4)
 	DBAR	$0x14
 	MOVV	$1, R4
@@ -898,8 +906,9 @@ cas128_rel_loop:
 	BNE	R9, R5, cas128_rel_fail
 	MOVV	8(R4), R10
 	BNE	R10, R6, cas128_rel_fail
-	SCV	R7, (R4)
-	BEQ	R7, cas128_rel_loop
+	MOVV	R7, R11
+	SCV	R11, (R4)
+	BEQ	R11, cas128_rel_loop
 	MOVV	R8, 8(R4)
 	MOVV	$1, R4
 	MOVB	R4, ret+40(FP)
@@ -921,8 +930,9 @@ cas128_aqrl_loop:
 	BNE	R9, R5, cas128_aqrl_fail
 	MOVV	8(R4), R10
 	BNE	R10, R6, cas128_aqrl_fail
-	SCV	R7, (R4)
-	BEQ	R7, cas128_aqrl_loop
+	MOVV	R7, R11
+	SCV	R11, (R4)
+	BEQ	R11, cas128_aqrl_loop
 	MOVV	R8, 8(R4)
 	DBAR	$0x14
 	MOVV	$1, R4
@@ -944,8 +954,9 @@ cax128_relaxed_loop:
 	MOVV	8(R4), R10
 	BNE	R9, R5, cax128_relaxed_done
 	BNE	R10, R6, cax128_relaxed_done
-	SCV	R7, (R4)
-	BEQ	R7, cax128_relaxed_loop
+	MOVV	R7, R11
+	SCV	R11, (R4)
+	BEQ	R11, cax128_relaxed_loop
 	MOVV	R8, 8(R4)
 cax128_relaxed_done:
 	MOVV	R9, lo+40(FP)
@@ -964,8 +975,9 @@ cax128_acq_loop:
 	MOVV	8(R4), R10
 	BNE	R9, R5, cax128_acq_done
 	BNE	R10, R6, cax128_acq_done
-	SCV	R7, (R4)
-	BEQ	R7, cax128_acq_loop
+	MOVV	R7, R11
+	SCV	R11, (R4)
+	BEQ	R11, cax128_acq_loop
 	MOVV	R8, 8(R4)
 cax128_acq_done:
 	DBAR	$0x14
@@ -986,8 +998,9 @@ cax128_rel_loop:
 	MOVV	8(R4), R10
 	BNE	R9, R5, cax128_rel_done
 	BNE	R10, R6, cax128_rel_done
-	SCV	R7, (R4)
-	BEQ	R7, cax128_rel_loop
+	MOVV	R7, R11
+	SCV	R11, (R4)
+	BEQ	R11, cax128_rel_loop
 	MOVV	R8, 8(R4)
 cax128_rel_done:
 	MOVV	R9, lo+40(FP)
@@ -1007,8 +1020,9 @@ cax128_aqrl_loop:
 	MOVV	8(R4), R10
 	BNE	R9, R5, cax128_aqrl_done
 	BNE	R10, R6, cax128_aqrl_done
-	SCV	R7, (R4)
-	BEQ	R7, cax128_aqrl_loop
+	MOVV	R7, R11
+	SCV	R11, (R4)
+	BEQ	R11, cax128_aqrl_loop
 	MOVV	R8, 8(R4)
 cax128_aqrl_done:
 	DBAR	$0x14
