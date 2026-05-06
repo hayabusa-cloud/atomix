@@ -59,7 +59,7 @@ Pointer-based 32/64/uintptr Add/Sub return the new value. Pointer-based MemoryOr
 
 Int128/Uint128 require 16-byte alignment. True 128-bit atomicity on:
 - amd64: LOCK CMPXCHG16B
-- arm64: LDXP/STXP (default, ARMv8.0+) or CASP (-tags=lse2, ARMv8.4+)
+- arm64: LDXP/STXP (default, ARMv8.1+) or CASP (-tags=lse2, ARMv8.4+)
 
 RISC-V and LoongArch use low-word LR/SC or LL/SC emulation for 128-bit operations. Treat those paths as limited emulation, not true 128-bit atomicity. On those architectures, non-relaxed 128-bit Swap variants alias the relaxed swap path.
 
@@ -98,7 +98,7 @@ Treat these as verification questions, not automatic findings.
 1. **Wrong return value assumption**: Most wrapper Add/Sub and pointer-based 32/64/uintptr Add/Sub operations return the new value; pointer-based 128-bit Add returns the old value
 2. **128-bit alignment**: Prefer PlaceAligned* helpers for alignment-sensitive examples; unaligned 128-bit access can SIGBUS
 3. **Race detector**: Do not report race output as a product race solely from `-race`; first verify whether the atomic path bypasses Go's race-detector model and whether the non-race contract fails
-4. **ARM64 requirements**: LSE (ARMv8.1+) for 32/64-bit atomics; 128-bit works on ARMv8.0+ (LDXP/STXP)
+4. **ARM64 requirements**: LSE (ARMv8.1+) for 32/64-bit atomics; 128-bit works on ARMv8.1+ (LDXP/STXP)
 
 ## File Structure
 
