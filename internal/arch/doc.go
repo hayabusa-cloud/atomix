@@ -14,16 +14,20 @@
 // The package provides optimized implementations for:
 //   - amd64: x86-64 with TSO (Total Store Ordering)
 //   - arm64: ARM64 with LSE (Large System Extensions)
-//   - riscv64: RISC-V 64-bit with LL/SC atomics
-//   - loong64: LoongArch 64-bit with LL/SC atomics
+//   - riscv64: RISC-V 64-bit with AMO atomics and limited LR/SC paths
+//   - loong64: LoongArch 64-bit with AM* atomics and limited LL/SC paths
 //
-// All other architectures fall back to sync/atomic which provides sequential
-// consistency (equivalent to AcqRel ordering).
+// On fallback architectures, 32-bit, 64-bit, uintptr, and pointer operations
+// use sync/atomic, which provides sequential consistency. Ordering variants
+// collapse to that stronger fallback for those widths. Generic 128-bit
+// operations are non-atomic two-word sequences and require external
+// synchronization.
 //
 // # Memory Ordering
 //
 // All functions include a memory ordering suffix:
-//   - Relaxed: No ordering guarantees, fastest
+//   - Relaxed: Atomicity only for supported atomic widths, with no
+//     synchronization ordering; see 128-bit caveats below
 //   - Acquire: Loads after this see stores before a paired Release
 //   - Release: Stores before this are visible after a paired Acquire
 //   - AcqRel: Both Acquire and Release semantics (for RMW operations)
@@ -50,8 +54,9 @@
 //
 // RISC-V64 / LoongArch64:
 //
-//	These architectures have weak ordering and all atomic operations require
-//	explicit fence instructions. All operations are implemented in assembly:
+//	These architectures have weak ordering. Non-relaxed orderings require
+//	explicit fences, barriers, or ordered RMW encodings. All operations are
+//	implemented in assembly:
 //	- RISC-V: Uses AMO instructions with .aq/.rl suffixes, or LR/SC loops
 //	- LoongArch: Uses AM* instructions, or LL/SC loops with DBAR barriers
 //
@@ -59,8 +64,11 @@
 //
 // 128-bit operations are available on all supported architectures:
 //   - amd64: CMPXCHG16B instruction (requires 16-byte alignment)
-//   - arm64: LDXP/STXP (default) or CASP with -tags=lse2 for ARMv8.4+
-//   - riscv64/loong64: Emulated via LL/SC on low 64 bits with full barrier
+//   - arm64: LDXP/STXP (default LL/SC path, documented for ARMv8.1+) or
+//     CASP with -tags=lse2 for ARMv8.4+ with LSE2
+//   - riscv64/loong64: Emulated via low-word LR/SC or LL/SC; Load/Store and
+//     CAS/CAX paths use ordering-specific fences/barriers, but Swap128
+//     non-relaxed variants alias relaxed swap; not true 128-bit atomicity
 //
 // # Inlining Optimization
 //

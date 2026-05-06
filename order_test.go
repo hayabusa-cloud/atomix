@@ -161,7 +161,7 @@ func TestMemoryOrderCompareExchange(t *testing.T) {
 func TestMemoryOrderAdd(t *testing.T) {
 	var v int32 = 42
 
-	// Add returns NEW value (like sync/atomic)
+	// Add returns NEW value by atomix pointer-based 32-bit contract.
 	got := atomix.Relaxed.AddInt32(&v, 10)
 	if got != 52 {
 		t.Fatalf("AddInt32: got=%d, want 52", got)

@@ -596,7 +596,7 @@ func TestCaxPointer(t *testing.T) {
 func TestAddInt32(t *testing.T) {
 	var v int32 = 10
 
-	// Add returns NEW value (like sync/atomic)
+	// Add returns NEW value by atomix internal 32/64/uintptr contract.
 	if got := arch.AddInt32Relaxed(&v, 5); got != 15 || v != 15 {
 		t.Fatalf("AddInt32Relaxed: got=%d, v=%d", got, v)
 	}
@@ -619,7 +619,7 @@ func TestAddInt32(t *testing.T) {
 func TestAddUint32(t *testing.T) {
 	var v uint32 = 10
 
-	// Add returns NEW value (like sync/atomic)
+	// Add returns NEW value by atomix internal 32/64/uintptr contract.
 	if got := arch.AddUint32Relaxed(&v, 5); got != 15 || v != 15 {
 		t.Fatalf("AddUint32Relaxed: got=%d, v=%d", got, v)
 	}
@@ -641,7 +641,7 @@ func TestAddUint32(t *testing.T) {
 func TestAddInt64(t *testing.T) {
 	var v int64 = 10
 
-	// Add returns NEW value (like sync/atomic)
+	// Add returns NEW value by atomix internal 32/64/uintptr contract.
 	if got := arch.AddInt64Relaxed(&v, 5); got != 15 || v != 15 {
 		t.Fatalf("AddInt64Relaxed: got=%d, v=%d", got, v)
 	}
@@ -664,7 +664,7 @@ func TestAddInt64(t *testing.T) {
 func TestAddUint64(t *testing.T) {
 	var v uint64 = 10
 
-	// Add returns NEW value (like sync/atomic)
+	// Add returns NEW value by atomix internal 32/64/uintptr contract.
 	if got := arch.AddUint64Relaxed(&v, 5); got != 15 || v != 15 {
 		t.Fatalf("AddUint64Relaxed: got=%d, v=%d", got, v)
 	}
@@ -686,7 +686,7 @@ func TestAddUint64(t *testing.T) {
 func TestAddUintptr(t *testing.T) {
 	var v uintptr = 10
 
-	// Add returns NEW value (like sync/atomic)
+	// Add returns NEW value by atomix internal 32/64/uintptr contract.
 	if got := arch.AddUintptrRelaxed(&v, 5); got != 15 || v != 15 {
 		t.Fatalf("AddUintptrRelaxed: got=%d, v=%d", got, v)
 	}

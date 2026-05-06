@@ -141,7 +141,7 @@ func TestUintptrAdd(t *testing.T) {
 	var a atomix.Uintptr
 	a.Store(100)
 
-	// Add returns NEW value (like sync/atomic)
+	// Add returns NEW value by atomix wrapper contract.
 	got := a.Add(50)
 	if got != 150 {
 		t.Fatalf("Add: got %d, want 150", got)
@@ -170,7 +170,7 @@ func TestUintptrSub(t *testing.T) {
 	var a atomix.Uintptr
 	a.Store(100)
 
-	// Sub returns NEW value (like sync/atomic)
+	// Sub returns NEW value by atomix wrapper contract.
 	got := a.Sub(30)
 	if got != 70 {
 		t.Fatalf("Sub: got %d, want 70", got)
@@ -405,7 +405,7 @@ func TestInt64Add(t *testing.T) {
 	var a atomix.Int64
 	a.Store(10)
 
-	// Add returns NEW value (like sync/atomic)
+	// Add returns NEW value by atomix wrapper contract.
 	got := a.Add(5)
 	if got != 15 {
 		t.Fatalf("Add: got %d, want 15", got)
@@ -440,7 +440,7 @@ func TestInt64Sub(t *testing.T) {
 	var a atomix.Int64
 	a.Store(100)
 
-	// Sub returns NEW value (like sync/atomic)
+	// Sub returns NEW value by atomix wrapper contract.
 	got := a.Sub(30)
 	if got != 70 {
 		t.Fatalf("Sub: got %d, want 70", got)
@@ -674,7 +674,7 @@ func TestUint32Add(t *testing.T) {
 	var a atomix.Uint32
 	a.Store(100)
 
-	// Add returns NEW value (like sync/atomic)
+	// Add returns NEW value by atomix wrapper contract.
 	got := a.Add(50)
 	if got != 150 {
 		t.Fatalf("Add: got %d, want 150", got)
@@ -707,7 +707,7 @@ func TestUint32Sub(t *testing.T) {
 	var a atomix.Uint32
 	a.Store(100)
 
-	// Sub returns NEW value (like sync/atomic)
+	// Sub returns NEW value by atomix wrapper contract.
 	got := a.Sub(30)
 	if got != 70 {
 		t.Fatalf("Sub: got %d, want 70", got)
@@ -885,7 +885,7 @@ func TestUint64Sub(t *testing.T) {
 	var a atomix.Uint64
 	a.Store(100)
 
-	// Sub returns NEW value (like sync/atomic)
+	// Sub returns NEW value by atomix wrapper contract.
 	got := a.Sub(30)
 	if got != 70 {
 		t.Fatalf("Sub: got %d, want 70", got)

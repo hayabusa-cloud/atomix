@@ -18,7 +18,9 @@ import "unsafe"
 //   - Load: LD.D with optional DBAR for acquire
 //   - Store: ST.D with optional DBAR for release
 //   - RMW ops: LL/SC loops or AM* instructions
-//   - 128-bit: Emulated via LL/SC on low 64 bits with full barriers
+//   - 128-bit: Emulated via LL/SC on low 64 bits; Load/Store and CAS/CAX use
+//     ordering-specific DBARs, while Swap128 non-relaxed variants alias
+//     relaxed swap; not true 128-bit atomicity
 //
 // LoongArch atomic instructions:
 //   - LL.D/SC.D: Load-linked/store-conditional (doubleword)
@@ -414,8 +416,10 @@ func CaxPointerAcqRel(addr *unsafe.Pointer, old, new unsafe.Pointer) unsafe.Poin
 // 128-bit Operations
 // =============================================================================
 
-// 128-bit operations are emulated on LoongArch using LL/SC on the low 64 bits
-// with full memory barriers (DBAR 0). Requires 16-byte alignment.
+// 128-bit operations are emulated on LoongArch using LL/SC on the low 64 bits.
+// Load/Store and CAS/CAX paths use ordering-specific DBARs, while SwapUint128
+// non-relaxed variants alias the relaxed swap path. This is not true full-width
+// 128-bit atomicity. Requires 16-byte alignment.
 
 //go:noescape
 func LoadUint128Relaxed(addr *[16]byte) (lo, hi uint64)

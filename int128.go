@@ -54,6 +54,7 @@ func (a *Int128) StoreRelease(lo, hi int64) {
 
 // Swap atomically stores new value and returns the old value.
 // Uses acquire-release ordering.
+// On riscv64 and loong64, this aliases the relaxed 128-bit swap path.
 //
 //go:nosplit
 func (a *Int128) Swap(newLo, newHi int64) (oldLo, oldHi int64) {
@@ -70,6 +71,7 @@ func (a *Int128) SwapRelaxed(newLo, newHi int64) (oldLo, oldHi int64) {
 }
 
 // SwapAcquire atomically stores new value and returns the old value with acquire ordering.
+// On riscv64 and loong64, this aliases the relaxed 128-bit swap path.
 //
 //go:nosplit
 func (a *Int128) SwapAcquire(newLo, newHi int64) (oldLo, oldHi int64) {
@@ -78,6 +80,7 @@ func (a *Int128) SwapAcquire(newLo, newHi int64) (oldLo, oldHi int64) {
 }
 
 // SwapRelease atomically stores new value and returns the old value with release ordering.
+// On riscv64 and loong64, this aliases the relaxed 128-bit swap path.
 //
 //go:nosplit
 func (a *Int128) SwapRelease(newLo, newHi int64) (oldLo, oldHi int64) {
@@ -86,6 +89,7 @@ func (a *Int128) SwapRelease(newLo, newHi int64) (oldLo, oldHi int64) {
 }
 
 // SwapAcqRel atomically stores new value and returns the old value with acquire-release ordering.
+// On riscv64 and loong64, this aliases the relaxed 128-bit swap path.
 //
 //go:nosplit
 func (a *Int128) SwapAcqRel(newLo, newHi int64) (oldLo, oldHi int64) {

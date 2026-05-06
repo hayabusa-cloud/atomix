@@ -20,7 +20,7 @@ var counter atomix.Int64
 
 // Method-based API with ordering suffix
 counter.AddRelaxed(1)    // Relaxed: no synchronization
-counter.Add(1)           // AcqRel: default safe ordering
+counter.Add(1)           // AcqRel: default RMW ordering
 
 // Pointer-based API for raw memory
 var flags int32
@@ -54,9 +54,9 @@ Default methods (no ordering suffix) use:
 - Store operations: Relaxed
 - Read-modify-write operations: AcqRel
 
-**Note:** sync/atomic uses acquire for Load and release for Store (sequential consistency on x86). atomix defaults to Relaxed, which maps to different instructions on weakly-ordered architectures (e.g., LDR vs LDAR on ARM64). Use `LoadAcquire`/`StoreRelease` when sync/atomic-equivalent ordering is required.
+**Note:** sync/atomic operations are sequentially consistent. atomix defaults to Relaxed for Load and Store, which maps to different instructions on weakly-ordered architectures (e.g., LDR vs LDAR on ARM64). Use `LoadAcquire`/`StoreRelease` when an acquire/release synchronization edge is required.
 
-### When to Use Each Ordering
+### Ordering Selection Matrix
 
 | Use Case | Ordering | Rationale |
 |----------|----------|-----------|
@@ -106,7 +106,7 @@ var a, b atomix.Int64Padded  // 64-byte separation guaranteed
 | `And`, `Or`, `Xor` | old value | Atomic bitwise operations |
 | `Max`, `Min` | old value | Atomic maximum/minimum |
 
-**Return value semantics:** Add/Sub/Inc/Dec return the **new** value (like sync/atomic). Swap/And/Or/Xor/Max/Min return the **old** value.
+**Return value semantics:** Wrapper Add/Sub/Inc/Dec and pointer-based 32/64/uintptr Add/Sub return the **new** value. Pointer-based `MemoryOrder.AddInt128` and `MemoryOrder.AddUint128` return the **old** value. Swap/And/Or/Xor/Max/Min return the **old** value.
 
 ### CompareAndSwap vs CompareExchange
 
@@ -157,7 +157,9 @@ v.Store(lo, hi)
 |--------------|------------------------|
 | amd64 | `LOCK CMPXCHG16B` |
 | arm64 | `LDXP/STXP` (default) or `CASP` (`-tags=lse2`) |
-| riscv64, loong64 | Spinlock emulation (LL/SC on low 64 bits) |
+| riscv64, loong64 | Low-word LR/SC on riscv64 or LL/SC on loong64; not true 128-bit atomicity |
+
+On riscv64 and loong64, 128-bit `SwapAcquire`, `SwapRelease`, and `SwapAcqRel` alias the relaxed low-word swap path; use a separate 32/64-bit synchronization primitive or external synchronization when acquire/release publication is required.
 
 **Note:** 128-bit atomics are primarily useful for double-word CAS patterns (e.g., lock-free data structures with version counters).
 
@@ -170,13 +172,13 @@ x86-64 provides Total Store Ordering (TSO), a strong memory model where:
 - All stores have implicit release semantics
 - Store-load ordering requires explicit barrier (MFENCE) or locked instruction
 
-Consequently, all ordering variants compile to identical machine code on x86-64. The primary benefit of explicit ordering on x86-64 is documentation and portability.
+Consequently, all ordering variants compile to identical machine code on x86-64. The primary role of explicit ordering on x86-64 is documentation and portability.
 
 | Operation | Instruction | Notes |
 |-----------|-------------|-------|
 | Load | `MOV` | Plain memory access |
 | Store | `MOV` | Plain memory access |
-| Add | `LOCK XADD` | Returns old value |
+| Add | `LOCK XADD` | Instruction returns old operand; Add APIs that promise new values compute them after the instruction |
 | Swap | `XCHG` | Implicit LOCK |
 | CAS | `LOCK CMPXCHG` | |
 | And/Or/Xor | `LOCK CMPXCHG` loop | Returns old value via CAS loop |
@@ -186,7 +188,7 @@ Load and Store are implemented in pure Go for compiler inlining.
 
 ### ARM64 (Weakly Ordered)
 
-ARM64 has a weakly ordered memory model requiring explicit ordering instructions. LSE (Large System Extensions) provides atomic instructions with ordering suffixes:
+ARM64 has a weakly ordered memory model requiring explicit ordering instructions. atomix documents ARMv8.4+ as the ARM64 package baseline for LSE-backed 32/64-bit atomics. The default 128-bit LL/SC path is documented separately for ARMv8.1+. LSE (Large System Extensions) provides atomic instructions with ordering suffixes:
 
 **Suffix meanings:** No suffix = Relaxed, `A` = Acquire, `L` = Release, `AL` = Acquire-Release
 
@@ -209,10 +211,10 @@ Relaxed load/store are implemented in pure Go for inlining. Other orderings use 
 
 | Build Tag | Instructions | Target Hardware |
 |-----------|--------------|-----------------|
-| (default) | `LDXP/STXP` (LL/SC loop) | All ARMv8+ |
+| (default) | `LDXP/STXP` (LL/SC loop) | ARMv8.1+ LL/SC path |
 | `-tags=lse2` | `CASP` (single instruction) | ARMv8.4+ with LSE2 |
 
-LL/SC (Load-Link/Store-Conditional) retries on contention. CASP provides single-instruction atomicity but requires newer hardware.
+LL/SC (Load-Link/Store-Conditional) retries on contention and is documented for ARMv8.1+. CASP provides single-instruction atomicity on ARMv8.4+ with LSE2.
 
 ### RISC-V 64-bit
 
@@ -226,7 +228,7 @@ RISC-V RVWMO (Weak Memory Ordering) uses explicit fence instructions:
 | Store Release | `FENCE RW,W` + `SD` |
 | RMW | `AMO` instructions with `.aq`/`.rl` modifiers |
 
-128-bit operations use spinlock-based emulation.
+128-bit operations use low-word LR/SC emulation and may exhibit torn reads.
 
 ### LoongArch 64-bit
 
@@ -240,7 +242,7 @@ LoongArch uses DBAR (data barrier) instructions:
 | Store Release | `DBAR` + `ST.D` |
 | RMW | `AM*_DB` instructions |
 
-128-bit operations use spinlock-based emulation.
+128-bit operations use low-word LL/SC emulation and may exhibit torn reads.
 
 ### Fallback
 
@@ -257,23 +259,23 @@ Unsupported architectures use `sync/atomic`, which provides sequential consisten
 
 ### Comparison with sync/atomic
 
-sync/atomic provides sequential consistency, which is:
-- **Sufficient** for most use cases
-- **Portable** across all architectures
-- **Simple** to reason about
+sync/atomic provides one sequentially consistent ordering for all operations:
+- Single ordering contract across operations
+- Portable behavior across Go architectures
+- No per-operation ordering selection
 
-Use atomix when:
-- Building lock-free data structures
-- Interoperating with kernel or hardware interfaces (io_uring, shared memory)
-- Porting C/C++ code with explicit memory ordering
-- Targeting ARM64/RISC-V where explicit ordering controls instruction selection
+atomix targets:
+- Lock-free data structures
+- Kernel or hardware interface interoperation (io_uring, shared memory)
+- C/C++ ports that already carry explicit memory ordering
+- ARM64/RISC-V paths where explicit ordering controls instruction selection
 
 ## Platform Support
 
 | Platform | Implementation |
 |----------|----------------|
 | linux/amd64 | Native assembly |
-| linux/arm64 | Native assembly with LSE |
+| linux/arm64 | Native assembly with LSE; ARMv8.4+ package baseline |
 | linux/riscv64 | Native assembly (128-bit emulated) |
 | linux/loong64 | Native assembly (128-bit emulated) |
 | darwin/amd64, darwin/arm64 | Native assembly |
@@ -284,7 +286,7 @@ Use atomix when:
 
 atomix provides a customized Go compiler that emits inline atomic instructions instead of function calls. This transforms function calls into single CPU instructions, eliminating call overhead.
 
-### Quick Start
+### Compiler Workflow
 
 ```bash
 # Install the intrinsics-customized compiler
@@ -293,8 +295,11 @@ make install-compiler
 # Build with intrinsics
 make build
 
-# Test with intrinsics
+# Test with intrinsics (120s timeout)
 make test
+
+# Run benchmarks with a longer timeout
+make bench
 
 # Verify intrinsics are applied
 make verify
