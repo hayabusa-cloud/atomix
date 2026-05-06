@@ -629,8 +629,8 @@ TEXT ·CaxPointerAcqRel(SB), NOSPLIT, $0-32
 // ============================================================================
 // 128-bit Operations
 // RISC-V does not have native 128-bit atomics.
-// We emulate using a spinlock on the low word via LR/SC.
-// This is NOT truly atomic 128-bit but provides mutual exclusion.
+// We emulate by coordinating the low word via LR/SC and updating the high word
+// separately. This is NOT truly atomic for the full 128 bits.
 // The address MUST be 16-byte aligned.
 // ============================================================================
 
@@ -661,7 +661,7 @@ load128_acq_loop:
 	RET
 
 // func StoreUint128Relaxed(addr *[16]byte, lo, hi uint64)
-// Use LR/SC on lo word as a lock
+// Use LR/SC on the low word; the high word is stored separately.
 TEXT ·StoreUint128Relaxed(SB), NOSPLIT, $0-24
 	MOV	addr+0(FP), A0
 	MOV	lo+8(FP), A1
@@ -687,7 +687,7 @@ store128_rel_loop:
 	RET
 
 // func SwapUint128Relaxed(addr *[16]byte, newLo, newHi uint64) (oldLo, oldHi uint64)
-// Use LR/SC on lo word, returns old value
+// Use LR/SC on the low word and return the previous pair snapshot.
 TEXT ·SwapUint128Relaxed(SB), NOSPLIT, $0-40
 	MOV	addr+0(FP), A0
 	MOV	newLo+8(FP), A1

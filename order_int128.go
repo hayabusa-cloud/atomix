@@ -37,6 +37,8 @@ func (o MemoryOrder) StoreInt128(addr *Int128, lo, hi int64) {
 // SwapInt128 atomically stores (newLo, newHi) to *addr and returns the old value.
 // addr MUST be 16-byte aligned; use PlaceAlignedInt128 to ensure alignment.
 // Unknown orderings fallback to AcqRel.
+// On riscv64 and loong64, Acquire/Release/AcqRel orders alias the relaxed
+// 128-bit swap path.
 //
 //go:nosplit
 func (o MemoryOrder) SwapInt128(addr *Int128, newLo, newHi int64) (oldLo, oldHi int64) {

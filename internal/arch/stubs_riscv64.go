@@ -18,7 +18,9 @@ import "unsafe"
 //   - Load: LD with optional FENCE for acquire
 //   - Store: SD with optional FENCE for release
 //   - RMW ops: LR/SC loops or AMO instructions with ordering bits
-//   - 128-bit: Emulated via LR/SC on low 64 bits with full barriers
+//   - 128-bit: Emulated via LR/SC on low 64 bits; Load/Store and CAS/CAX use
+//     ordering-specific fences, while Swap128 non-relaxed variants alias
+//     relaxed swap; not true 128-bit atomicity
 //
 // RISC-V atomic instructions:
 //   - LR.D/LR.W: Load-reserved (doubleword/word)
@@ -414,8 +416,10 @@ func CaxPointerAcqRel(addr *unsafe.Pointer, old, new unsafe.Pointer) unsafe.Poin
 // 128-bit Operations
 // =============================================================================
 
-// 128-bit operations are emulated on RISC-V using LR/SC on the low 64 bits
-// with full memory barriers. Requires 16-byte alignment.
+// 128-bit operations are emulated on RISC-V using LR/SC on the low 64 bits.
+// Load/Store and CAS/CAX paths use ordering-specific fences, while SwapUint128
+// non-relaxed variants alias the relaxed swap path. This is not true full-width
+// 128-bit atomicity. Requires 16-byte alignment.
 
 //go:noescape
 func LoadUint128Relaxed(addr *[16]byte) (lo, hi uint64)
