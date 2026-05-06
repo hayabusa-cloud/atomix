@@ -20,7 +20,7 @@ var counter atomix.Int64
 
 // API basée sur méthodes avec suffixe d'ordonnancement
 counter.AddRelaxed(1)    // Relaxed : aucune synchronisation
-counter.Add(1)           // AcqRel : ordonnancement sûr par défaut
+counter.Add(1)           // AcqRel : ordonnancement RMW par défaut
 
 // API basée sur pointeurs pour mémoire brute
 var flags int32
@@ -54,9 +54,9 @@ Les méthodes par défaut (sans suffixe d'ordonnancement) utilisent :
 - Opérations Store : Relaxed
 - Opérations lecture-modification-écriture : AcqRel
 
-**Note :** sync/atomic utilise acquire pour Load et release pour Store (cohérence séquentielle sur x86). atomix utilise Relaxed par défaut, ce qui correspond à des instructions distinctes sur les architectures faiblement ordonnées (ex. LDR vs LDAR sur ARM64). Utilisez `LoadAcquire`/`StoreRelease` pour un ordonnancement équivalent à sync/atomic.
+**Note :** Les opérations de sync/atomic sont séquentiellement cohérentes. atomix utilise Relaxed par défaut pour Load et Store, ce qui correspond à des instructions distinctes sur les architectures faiblement ordonnées (ex. LDR vs LDAR sur ARM64). Utilisez `LoadAcquire`/`StoreRelease` lorsqu'une synchronisation acquire/release est requise.
 
-### Quand Utiliser Chaque Ordonnancement
+### Matrice de Sélection d'Ordonnancement
 
 | Cas d'Usage | Ordonnancement | Raison |
 |-------------|----------------|--------|
@@ -106,7 +106,7 @@ var a, b atomix.Int64Padded  // Séparation de 64 octets garantie
 | `And`, `Or`, `Xor` | ancienne valeur | Opérations bit à bit atomiques |
 | `Max`, `Min` | ancienne valeur | Maximum/minimum atomique |
 
-**Sémantique des valeurs de retour :** Add/Sub/Inc/Dec retournent la **nouvelle** valeur (comme sync/atomic). Swap/And/Or/Xor/Max/Min retournent l'**ancienne** valeur.
+**Sémantique des valeurs de retour :** Add/Sub/Inc/Dec sur les types wrapper et Add/Sub de l'API pointeurs pour 32/64/uintptr retournent la **nouvelle** valeur. `MemoryOrder.AddInt128` et `MemoryOrder.AddUint128` dans l'API pointeurs retournent l'**ancienne** valeur. Swap/And/Or/Xor/Max/Min retournent l'**ancienne** valeur.
 
 ### CompareAndSwap vs CompareExchange
 
@@ -157,7 +157,9 @@ v.Store(lo, hi)
 |--------------|-------------------------|
 | amd64 | `LOCK CMPXCHG16B` |
 | arm64 | `LDXP/STXP` (défaut) ou `CASP` (`-tags=lse2`) |
-| riscv64, loong64 | Émulation spinlock (LL/SC sur les 64 bits bas) |
+| riscv64, loong64 | LR/SC sur les 64 bits bas pour riscv64 ou LL/SC pour loong64 ; pas de vraie atomicité 128 bits |
+
+Sur riscv64 et loong64, `SwapAcquire`, `SwapRelease` et `SwapAcqRel` pour les valeurs 128 bits suivent la même voie relaxed de swap du mot bas ; utilisez une primitive de synchronisation 32/64 bits séparée ou une synchronisation externe lorsqu'une publication acquire/release est requise.
 
 **Note :** Les atomiques 128 bits sont principalement utiles pour les patterns de CAS double mot (ex., structures de données lock-free avec compteurs de version).
 
@@ -170,13 +172,13 @@ x86-64 fournit Total Store Ordering (TSO), un modèle mémoire fort où :
 - Tous les stores ont une sémantique release implicite
 - L'ordonnancement store-load requiert une barrière explicite (MFENCE) ou instruction verrouillée
 
-Par conséquent, toutes les variantes d'ordonnancement compilent vers un code machine identique sur x86-64. Le bénéfice principal de l'ordonnancement explicite sur x86-64 est la documentation et la portabilité.
+Par conséquent, toutes les variantes d'ordonnancement compilent vers un code machine identique sur x86-64. Le rôle principal de l'ordonnancement explicite sur x86-64 est la documentation et la portabilité.
 
 | Opération | Instruction | Notes |
 |-----------|-------------|-------|
 | Load | `MOV` | Accès mémoire simple |
 | Store | `MOV` | Accès mémoire simple |
-| Add | `LOCK XADD` | Retourne ancienne valeur |
+| Add | `LOCK XADD` | L'instruction retourne l'opérande précédent ; les API Add qui promettent la nouvelle valeur la calculent après l'instruction |
 | Swap | `XCHG` | LOCK implicite |
 | CAS | `LOCK CMPXCHG` | |
 | And/Or/Xor | boucle `LOCK CMPXCHG` | Retourne l'ancienne valeur via boucle CAS |
@@ -186,7 +188,7 @@ Load et Store sont implémentés en Go pur pour l'inlining du compilateur.
 
 ### ARM64 (Faiblement Ordonné)
 
-ARM64 a un modèle mémoire faible nécessitant des instructions d'ordonnancement explicites. LSE (Large System Extensions) fournit des instructions atomiques avec suffixes d'ordonnancement :
+ARM64 a un modèle mémoire faible nécessitant des instructions d'ordonnancement explicites. atomix documente ARMv8.4+ comme référence de base du paquet pour les atomiques LSE 32/64 bits. Le chemin LL/SC 128 bits est documenté séparément pour ARMv8.1+. LSE (Large System Extensions) fournit des instructions atomiques avec suffixes d'ordonnancement :
 
 **Signification des suffixes :** Sans suffixe = Relaxed, `A` = Acquire, `L` = Release, `AL` = Acquire-Release
 
@@ -209,10 +211,10 @@ Les load/store relâchés sont implémentés en Go pur pour l'inlining. Les autr
 
 | Tag de Build | Instructions | Matériel Cible |
 |--------------|--------------|----------------|
-| (défaut) | `LDXP/STXP` (boucle LL/SC) | Tout ARMv8+ |
+| (défaut) | `LDXP/STXP` (boucle LL/SC) | Chemin LL/SC ARMv8.1+ |
 | `-tags=lse2` | `CASP` (instruction unique) | ARMv8.4+ avec LSE2 |
 
-LL/SC (Load-Link/Store-Conditional) réessaie en cas de contention. CASP fournit une atomicité en une seule instruction mais nécessite du matériel plus récent.
+LL/SC (Load-Link/Store-Conditional) réessaie en cas de contention et est documenté pour ARMv8.1+. CASP fournit une atomicité en une seule instruction sur ARMv8.4+ avec LSE2.
 
 ### RISC-V 64 bits
 
@@ -226,7 +228,7 @@ RISC-V RVWMO (Ordonnancement Mémoire Faible) utilise des instructions fence exp
 | Store Release | `FENCE RW,W` + `SD` |
 | RMW | Instructions `AMO` avec modificateurs `.aq`/`.rl` |
 
-Les opérations 128 bits utilisent une émulation basée sur spinlock.
+Les opérations 128 bits utilisent une émulation LR/SC sur les 64 bits bas et peuvent présenter des lectures déchirées.
 
 ### LoongArch 64 bits
 
@@ -240,7 +242,7 @@ LoongArch utilise des instructions DBAR (barrière de données) :
 | Store Release | `DBAR` + `ST.D` |
 | RMW | Instructions `AM*_DB` |
 
-Les opérations 128 bits utilisent une émulation basée sur spinlock.
+Les opérations 128 bits utilisent une émulation LL/SC sur les 64 bits bas et peuvent présenter des lectures déchirées.
 
 ### Fallback
 
@@ -257,23 +259,23 @@ Les architectures non supportées utilisent `sync/atomic`, qui fournit la cohér
 
 ### Comparaison avec sync/atomic
 
-sync/atomic fournit la cohérence séquentielle, qui est :
-- **Suffisante** pour la plupart des cas d'usage
-- **Portable** à travers toutes les architectures
-- **Simple** à raisonner
+sync/atomic fournit un ordonnancement séquentiellement cohérent unique pour toutes les opérations :
+- Contrat d'ordonnancement unique entre opérations
+- Comportement portable entre architectures Go
+- Aucune sélection d'ordonnancement par opération
 
-Utiliser atomix quand :
-- Construction de structures de données lock-free
+atomix cible :
+- Structures de données lock-free
 - Interopération avec le noyau ou interfaces matérielles (io_uring, mémoire partagée)
-- Portage de code C/C++ avec ordonnancement mémoire explicite
-- Ciblage ARM64/RISC-V où l'ordonnancement explicite contrôle la sélection d'instructions
+- Ports C/C++ qui portent déjà un ordonnancement mémoire explicite
+- Chemins ARM64/RISC-V où l'ordonnancement explicite contrôle la sélection d'instructions
 
 ## Support des Plateformes
 
 | Plateforme | Implémentation |
 |------------|----------------|
 | linux/amd64 | Assembleur natif |
-| linux/arm64 | Assembleur natif avec LSE |
+| linux/arm64 | Assembleur natif avec LSE ; référence de base du paquet ARMv8.4+ |
 | linux/riscv64 | Assembleur natif (128 bits émulé) |
 | linux/loong64 | Assembleur natif (128 bits émulé) |
 | darwin/amd64, darwin/arm64 | Assembleur natif |
@@ -284,7 +286,7 @@ Utiliser atomix quand :
 
 atomix fournit un compilateur Go personnalisé qui émet des instructions atomiques en ligne au lieu d'appels de fonction. Cela transforme les appels de fonction en instructions CPU uniques, éliminant le surcoût d'appel.
 
-### Démarrage Rapide
+### Flux du Compilateur
 
 ```bash
 # Installer le compilateur avec intrinsèques personnalisés
@@ -293,8 +295,11 @@ make install-compiler
 # Compiler avec intrinsèques
 make build
 
-# Tester avec intrinsèques
+# Tester avec les intrinsèques (délai de 120s)
 make test
+
+# Exécuter les benchmarks avec un délai plus long
+make bench
 
 # Vérifier que les intrinsèques sont appliqués
 make verify

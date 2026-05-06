@@ -20,7 +20,7 @@ var counter atomix.Int64
 
 // 带内存序后缀的方法 API
 counter.AddRelaxed(1)    // Relaxed：无同步
-counter.Add(1)           // AcqRel：默认安全内存序
+counter.Add(1)           // AcqRel：默认 RMW 内存序
 
 // 用于原始内存的指针 API
 var flags int32
@@ -54,9 +54,9 @@ go get code.hybscloud.com/atomix
 - 存储操作：Relaxed
 - 读-修改-写操作：AcqRel
 
-**注意：** sync/atomic 的 Load 使用 acquire 语义，Store 使用 release 语义（x86 上为顺序一致性）。atomix 默认使用 Relaxed，在弱序架构上映射为不同的指令（如 ARM64 上 LDR 与 LDAR）。需要与 sync/atomic 等效的语义时，请使用 `LoadAcquire`/`StoreRelease`。
+**注意：** sync/atomic 操作是顺序一致的。atomix 的 Load 和 Store 默认使用 Relaxed，在弱序架构上映射为不同的指令（如 ARM64 上 LDR 与 LDAR）。需要 acquire/release 同步边时，请使用 `LoadAcquire`/`StoreRelease`。
 
-### 各内存序的使用场景
+### 内存序选择矩阵
 
 | 使用场景 | 内存序 | 原因 |
 |----------|--------|------|
@@ -106,7 +106,7 @@ var a, b atomix.Int64Padded  // 保证 64 字节间隔
 | `And`, `Or`, `Xor` | 旧值 | 原子位运算 |
 | `Max`, `Min` | 旧值 | 原子最大/最小值 |
 
-**返回值语义:** Add/Sub/Inc/Dec 返回**新值**（与 sync/atomic 一致）。Swap/And/Or/Xor/Max/Min 返回**旧值**。
+**返回值语义:** 包装类型 Add/Sub/Inc/Dec 以及指针式 32/64/uintptr Add/Sub 返回**新值**。指针式 `MemoryOrder.AddInt128` 和 `MemoryOrder.AddUint128` 返回**旧值**。Swap/And/Or/Xor/Max/Min 返回**旧值**。
 
 ### CompareAndSwap 与 CompareExchange
 
@@ -157,7 +157,9 @@ v.Store(lo, hi)
 |------|-----------|
 | amd64 | `LOCK CMPXCHG16B` |
 | arm64 | `LDXP/STXP`（默认）或 `CASP`（`-tags=lse2`） |
-| riscv64, loong64 | 自旋锁模拟（LL/SC 低 64 位） |
+| riscv64, loong64 | riscv64 使用低 64 位 LR/SC，loong64 使用 LL/SC 模拟；不是真正的 128 位原子性 |
+
+在 riscv64 和 loong64 上，128 位值的 `SwapAcquire`、`SwapRelease` 和 `SwapAcqRel` 会别名到低 64 位的 relaxed swap 路径；需要 acquire/release 发布语义时，请使用单独的 32/64 位同步原语或外部同步。
 
 **注意:** 128 位原子操作主要用于双字 CAS 模式（如带版本计数器的无锁数据结构）。
 
@@ -170,13 +172,13 @@ x86-64 提供全存储序（TSO），这是一种强内存模型：
 - 所有存储都有隐式 release 语义
 - 存储-加载序需要显式屏障（MFENCE）或锁定指令
 
-因此，在 x86-64 上所有内存序变体编译为相同的机器码。显式内存序在 x86-64 上的主要好处是文档化和可移植性。
+因此，在 x86-64 上所有内存序变体编译为相同的机器码。显式内存序在 x86-64 上的主要作用是文档化和可移植性。
 
 | 操作 | 指令 | 备注 |
 |------|------|------|
 | Load | `MOV` | 普通内存访问 |
 | Store | `MOV` | 普通内存访问 |
-| Add | `LOCK XADD` | 返回旧值 |
+| Add | `LOCK XADD` | 指令返回旧操作数；承诺返回新值的 Add API 会在指令后计算新值 |
 | Swap | `XCHG` | 隐式 LOCK |
 | CAS | `LOCK CMPXCHG` | |
 | And/Or/Xor | `LOCK CMPXCHG` 循环 | 通过 CAS 循环返回旧值 |
@@ -186,7 +188,7 @@ Load 和 Store 用纯 Go 实现以便编译器内联。
 
 ### ARM64（弱序）
 
-ARM64 是弱序内存模型，需要显式的顺序指令。LSE（大系统扩展）提供带内存序后缀的原子指令：
+ARM64 是弱序内存模型，需要显式的顺序指令。atomix 将 32/64 位 LSE 原子的包级基线记录为 ARMv8.4+；128 位 LL/SC 路径另行记录为 ARMv8.1+。LSE（大系统扩展）提供带内存序后缀的原子指令：
 
 **后缀含义：** 无后缀 = Relaxed，`A` = Acquire，`L` = Release，`AL` = Acquire-Release
 
@@ -209,10 +211,10 @@ Relaxed 加载/存储用纯 Go 实现以便内联。其他内存序使用 LSE �
 
 | 构建标签 | 指令 | 目标硬件 |
 |----------|------|----------|
-| （默认） | `LDXP/STXP`（LL/SC 循环） | 所有 ARMv8+ |
-| `-tags=lse2` | `CASP`（单指令） | ARMv8.4+ with LSE2 |
+| （默认） | `LDXP/STXP`（LL/SC 循环） | ARMv8.1+ LL/SC 路径 |
+| `-tags=lse2` | `CASP`（单指令） | ARMv8.4+ 且支持 LSE2 |
 
-LL/SC（Load-Link/Store-Conditional）在争用时重试。CASP 提供单指令原子性但需要较新硬件。
+LL/SC（Load-Link/Store-Conditional）在争用时重试，并记录为 ARMv8.1+ 路径。CASP 在 ARMv8.4+ 且支持 LSE2 的硬件上提供单指令原子性。
 
 ### RISC-V 64 位
 
@@ -226,7 +228,7 @@ RISC-V RVWMO（弱内存序）使用显式栅栏指令：
 | Store Release | `FENCE RW,W` + `SD` |
 | RMW | `AMO` 指令配合 `.aq`/`.rl` 修饰符 |
 
-128 位操作使用基于自旋锁的模拟。
+128 位操作使用低 64 位 LR/SC 模拟，可能出现撕裂读取。
 
 ### LoongArch 64 位
 
@@ -240,7 +242,7 @@ LoongArch 使用 DBAR（数据屏障）指令：
 | Store Release | `DBAR` + `ST.D` |
 | RMW | `AM*_DB` 指令 |
 
-128 位操作使用基于自旋锁的模拟。
+128 位操作使用低 64 位 LL/SC 模拟，可能出现撕裂读取。
 
 ### 回退
 
@@ -257,23 +259,23 @@ LoongArch 使用 DBAR（数据屏障）指令：
 
 ### 与 sync/atomic 的比较
 
-sync/atomic 提供顺序一致性，这是：
-- **足够的** 适用于大多数场景
-- **可移植的** 跨所有架构
-- **简单的** 易于理解
+sync/atomic 为所有操作提供一个顺序一致性内存序：
+- 所有操作使用单一内存序合约
+- 在 Go 支持架构上行为可移植
+- 不需要逐操作选择内存序
 
-使用 atomix 当：
-- 构建无锁数据结构
-- 与内核或硬件接口交互（io_uring、共享内存）
-- 移植有显式内存序的 C/C++ 代码
-- 目标是 ARM64/RISC-V，显式内存序控制指令选择
+atomix 面向：
+- 无锁数据结构
+- 内核或硬件接口互操作（io_uring、共享内存）
+- 已带显式内存序的 C/C++ 代码移植
+- 通过显式内存序控制指令选择的 ARM64/RISC-V 路径
 
 ## 平台支持
 
 | 平台 | 实现 |
 |------|------|
 | linux/amd64 | 原生汇编 |
-| linux/arm64 | 原生汇编，使用 LSE |
+| linux/arm64 | 原生汇编，使用 LSE；ARMv8.4+ 包级基线 |
 | linux/riscv64 | 原生汇编（128 位模拟） |
 | linux/loong64 | 原生汇编（128 位模拟） |
 | darwin/amd64, darwin/arm64 | 原生汇编 |
@@ -284,7 +286,7 @@ sync/atomic 提供顺序一致性，这是：
 
 atomix 提供定制的 Go 编译器，直接生成内联原子指令代替函数调用。这将函数调用转换为单条 CPU 指令，消除调用开销。
 
-### 快速开始
+### 编译器工作流
 
 ```bash
 # 安装定制的内联编译器
@@ -293,8 +295,11 @@ make install-compiler
 # 使用内联编译器构建
 make build
 
-# 使用内联编译器测试
+# 使用内联编译器测试（测试超时 120s）
 make test
+
+# 使用更长超时运行基准测试
+make bench
 
 # 验证内联是否生效
 make verify

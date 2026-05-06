@@ -1,16 +1,16 @@
 # Compiler Intrinsics
 
-Reference documentation for Go compiler intrinsics in atomix. Intrinsics replace function calls with inline CPU instructions, eliminating call overhead (stack frame, register spilling, prologue/epilogue).
+Reference documentation for Go compiler intrinsics in atomix. Intrinsics replace assembly-stub calls with inline CPU instructions, eliminating call overhead such as stack frames, register spills, and prologue or epilogue sequences.
 
-**Status:** Implemented for AMD64 and ARM64 (64-bit operations). RISC-V and LoongArch use assembly stubs. 128-bit operations use assembly stubs on all architectures.
+**Status:** Implemented for AMD64 and ARM64 32/64-bit and pointer-sized operations. RISC-V and LoongArch use assembly stubs. 128-bit operations use assembly stubs on all architectures.
 
 ## Instruction Mapping
 
 ### ARM64 (LSE)
 
-**Status: Intrinsified (LSE-guarded)**
+**Status: Intrinsified (LSE baseline)**
 
-ARM64 Large System Extensions provide atomic instructions with explicit memory ordering suffixes:
+ARM64 Large System Extensions provide atomic instructions with explicit memory ordering suffixes. The table below is the ISA-level instruction family; the current atomix ARM64 intrinsics path is described under [Known Limitation: ARM64 RMW Over-Ordering](#known-limitation-arm64-rmw-over-ordering).
 
 | Operation | Relaxed | Acquire | Release | AcqRel |
 |-----------|---------|---------|---------|--------|
@@ -31,9 +31,11 @@ ARM64 Large System Extensions provide atomic instructions with explicit memory o
 - `L`: Release (store ordering)
 - `AL`: Acquire-Release (full RMW ordering)
 
+Load and store intrinsics use the ordering-specific forms above. Current branchless ARM64 LSE intrinsics for `Swap`, `CAS`, `Add`, `And`, `Or`, and `Xor` intentionally emit the `AL` form for every requested ordering. `CAX` uses a direct compare-and-exchange SSA path and lowers to the backend LL/SC sequence on ARM64.
+
 **Return value note:** All LSE atomic RMW instructions (`LDADD`, `SWP`, `LDSET`, etc.) return the **old** value. atomix's `Add` returns the **new** value, so the intrinsic must compute `new = old + delta` after the instruction. `Swap`/`And`/`Or`/`Xor` return the old value directly (no conversion needed).
 
-**sync/atomic comparison:** Go's sync/atomic uses `AL` variants (sequential consistency). atomix exposes all orderings.
+**sync/atomic comparison:** Go's sync/atomic exposes one sequentially consistent contract. atomix exposes explicit per-ordering operations.
 
 ### x86-64 (TSO)
 
@@ -45,7 +47,7 @@ x86-64 Total Store Ordering provides implicit acquire/release. All orderings com
 |-----------|-------------|-------|
 | Load | `MOV` | Implicit acquire |
 | Store | `MOV` | Implicit release |
-| Add | `LOCK XADD` | Returns old value |
+| Add | `LOCK XADD` | Instruction returns old operand; Add APIs compute new-value returns after the instruction |
 | CAS | `LOCK CMPXCHG` | RAX = expected |
 | Swap | `XCHG` | Implicit LOCK |
 | And | `LOCK CMPXCHG` loop | CAS loop returns old value ‡ |
@@ -121,7 +123,7 @@ Intrinsics intercept at SSA generation, replacing `CALL` nodes with SSA operatio
 | `ssa/_gen/AMD64.rules` | Relaxed/release store → `MOV`, CAX lowering, `MFENCE` coalescing |
 | `ssa/_gen/ARM64.rules` | CAX/Xor lowering, relaxed load/store → `MOV`, `DMB` coalescing |
 | `amd64/ssa.go` | Code generation: `MFENCE`, CAX (`CMPXCHG`), Xor (CAS loop) |
-| `arm64/ssa.go` | Code generation: relaxed load/store, CAX (LL/SC + LSE), Xor (LL/SC + LSE) |
+| `arm64/ssa.go` | Code generation: relaxed load/store, branchless LSE RMW variants, CAX LL/SC, and barriers |
 
 ---
 
@@ -224,7 +226,7 @@ addF("code.hybscloud.com/atomix/internal/arch", "AddInt64AcqRel",
         types.TINT64, atomicEmitterARM64), sys.ARM64)
 ```
 
-**CAX pattern** — direct on both architectures (no LSE-guarded wrapper):
+**CAX pattern** — direct on both architectures with no LSE-guarded wrapper:
 
 ```go
 atomixCax64 := func(s *state, n *ir.CallExpr, args []*ssa.Value) *ssa.Value {
@@ -262,7 +264,7 @@ addF("...arch", "LoadInt64Acquire", atomixLoad64Acquire, sys.AMD64, sys.ARM64)
 
 ### Known Limitation: ARM64 RMW Over-Ordering
 
-All ARM64 RMW intrinsics (Swap, CAS, Add, And, Or, Xor) use the same `Variant` SSA op regardless of the requested ordering. The `Variant` ops lower to AcqRel instructions (`SWPAL`, `LDADDAL`, `CASAL`, etc.). This means:
+Branchless ARM64 LSE RMW intrinsics (`Swap`, `CAS`, `Add`, `And`, `Or`, `Xor`) use the same `Variant` SSA op regardless of the requested ordering. The `Variant` ops lower to AcqRel instructions (`SWPAL`, `LDADDAL`, `CASAL`, etc.). This means:
 
 - `AddInt64Relaxed` on ARM64 emits `LDADDAL` (AcqRel), not `LDADD` (Relaxed)
 - `SwapInt32Release` on ARM64 emits `SWPAL` (AcqRel), not `SWPL` (Release)
@@ -273,7 +275,7 @@ Per-ordering instruction selection (e.g., `LDADD` for Relaxed, `LDADDA` for Acqu
 
 ### 128-bit CAS Intrinsics
 
-**Status: Planned — not yet implemented.** Currently uses assembly stubs (`LOCK CMPXCHG16B` on AMD64, `LDXP/STXP` on ARM64).
+**Status: Planned for compiler intrinsics; implemented through assembly stubs today.** AMD64 uses `LOCK CMPXCHG16B`. ARM64 uses `LDXP/STXP` by default and `CASP` with `-tags=lse2`. RISC-V and LoongArch use low-word LR/SC or LL/SC emulation rather than true 128-bit atomic instructions.
 
 ### Build and Verify
 
@@ -300,23 +302,23 @@ GOROOT=$(pwd)/.. ./bin/go build -gcflags='-S' code.hybscloud.com/atomix 2>&1 | \
 | Function name mismatch | Naming convention | Match exact function name in `internal/arch` |
 | Wrong compiler being used | GOROOT not set | Set `GOROOT` to modified compiler path |
 | Sees CALL instructions | Standard compiler used | Rebuild with `make install-compiler` |
-| ARM64 RMW over-ordered | Design choice | Expected — Variant ops always emit AcqRel |
+| ARM64 RMW over-ordered | Design choice | Expected; Variant ops always emit AcqRel |
 
 **Common mistakes:**
 
 ```go
-// WRONG: Public package path
+// Does not match the intrinsified package path.
 addF("code.hybscloud.com/atomix", "AddInt64Relaxed", ...)
 
-// CORRECT: Internal package where low-level functions are defined
+// Uses the internal package where low-level functions are defined.
 addF("code.hybscloud.com/atomix/internal/arch", "AddInt64Relaxed", ...)
 ```
 
 ```go
-// WRONG: Using add() which doesn't support arch filtering
+// add does not support architecture filtering.
 add("...", "AddInt64Relaxed", ..., sys.ARM64)
 
-// CORRECT: Using addF() for architecture-specific intrinsics
+// addF supports architecture-specific intrinsics.
 addF("...", "AddInt64Relaxed", ..., sys.ARM64)
 ```
 
@@ -341,7 +343,7 @@ Both base and Variant SSA ops are folded (e.g., `AtomicAdd64` and `AtomicAdd64Va
 
 ### Relaxed Memory Ordering Optimization
 
-On ARM64, relaxed operations use faster instructions:
+On ARM64, relaxed operations use plain memory instructions:
 
 | Operation | Relaxed | Acquire/Release |
 |-----------|---------|-----------------|
@@ -382,21 +384,21 @@ MFENCE; MFENCE → MFENCE          (duplicate elimination)
 
 ### LSE Instruction Selection (ARM64)
 
-The atomix intrinsics compiler always emits LSE instructions directly. atomix requires ARMv8.4+ with mandatory LSE support — no runtime detection or LL/SC fallback is generated.
+For branchless 32/64-bit ARM64 RMW intrinsics, the atomix compiler selects the LSE variant directly. This covers `Swap`, `CAS`, `Add`, `And`, `Or`, and `Xor`. atomix documents ARMv8.4+ as the ARM64 package baseline for those branchless LSE intrinsics, so no runtime LSE detection branch or LL/SC fallback is generated for that path. Load/store intrinsics use direct load/store SSA ops, `CAX` uses the direct compare-and-exchange path, and 128-bit operations remain assembly stubs.
 
 ```go
 // From ssagen/intrinsics.go (makeAtomicGuardedIntrinsicARM64common):
-// Always use LSE variant (op1) - atomix requires ARM64 v8.4+
-// with mandatory LSE support. No runtime detection needed.
+// Always use LSE variant (op1) - atomix uses ARM64 v8.4+
+// as the documented package baseline. No runtime detection needed.
 emit(s, n, args, op1, typ, needReturn)
 ```
 
-Both `sync/atomic` and atomix use the `makeAtomicGuardedIntrinsicARM64` wrapper, but with different behavior. Go's `sync/atomic` uses the standard implementation that generates a runtime `cpu.ARM64.HasLSE` branch with both LSE and LL/SC code paths. The atomix fork modifies this wrapper to always select `op1` (the LSE Variant), eliminating the runtime branch entirely.
+For LSE-guarded RMW operations, both `sync/atomic` and atomix use the `makeAtomicGuardedIntrinsicARM64` wrapper, but with different behavior. Go's `sync/atomic` uses the standard implementation that generates a runtime `cpu.ARM64.HasLSE` branch with both LSE and LL/SC code paths. The atomix fork modifies this wrapper to always select `op1` (the LSE Variant), eliminating the runtime branch entirely.
 
 | Approach | Runtime Check | Instructions Emitted | Target |
 |----------|---------------|---------------------|--------|
-| sync/atomic | Yes (`cpu.ARM64.HasLSE`) | Both LSE and LL/SC | All ARMv8 |
-| atomix | No | LSE only | ARMv8.4+ |
+| sync/atomic LSE-guarded RMW | Yes (`cpu.ARM64.HasLSE`) | Both LSE and LL/SC | All ARMv8 |
+| atomix LSE-guarded RMW | No | LSE only | ARMv8.4+ package baseline |
 
 ---
 
@@ -410,15 +412,15 @@ Both `sync/atomic` and atomix use the `makeAtomicGuardedIntrinsicARM64` wrapper,
 | Producer-consumer flag | Acquire/Release | Medium |
 | Lock implementation | AcqRel | Highest |
 
-**Rule:** Use the weakest ordering that maintains correctness.
+**Rule:** Use the weakest ordering that maintains correctness. On the current ARM64 intrinsics path this mainly affects load/store instruction selection; branchless RMW intrinsics remain AcqRel, while assembly fallbacks can still use per-ordering RMW instructions.
 
 ### 2. Prefer Add Over CAS for Counters
 
 ```go
-// GOOD: Single instruction (LDADDAL on ARM64, LOCK XADD on x86)
+// Preferred: single instruction (LDADDAL on ARM64, LOCK XADD on x86)
 counter.Add(1)
 
-// AVOID: CAS loop (multiple instructions, retries under contention)
+// CAS loop: multiple instructions, retries under contention
 for {
     old := counter.Load()
     if counter.CompareAndSwap(old, old+1) {
@@ -440,13 +442,13 @@ sharedCount.AddRelease(localCount.SwapRelaxed(0))
 ### 4. Batch Operations to Amortize Barrier Cost
 
 ```go
-// AVOID: Multiple barriers
+// Repeated barriers
 for i := range items {
     process(items[i])
     counter.AddAcqRel(1)  // Barrier per iteration
 }
 
-// BETTER: Single barrier
+// Batched relaxed increments plus one barrier
 for i := range items {
     process(items[i])
     counter.AddRelaxed(1)
@@ -469,14 +471,14 @@ If you see `CALL` instructions to atomix functions, intrinsics are not being app
 - Indirect function calls (intrinsics only work on direct calls)
 - Generic type instantiation in some cases
 
-### 6. ARM64: Build with GOARM64=v8.1 for Servers
+### 6. ARM64: Build with GOARM64=v8.4 for Servers
 
 ```bash
-# Graviton2/3, Apple M1+, Ampere Altra all support LSE
-GOARM64=v8.1 go build -o app .
+# Use the documented atomix ARM64 baseline.
+GOARM64=v8.4 go build -o app .
 ```
 
-This eliminates runtime LSE detection branches and guarantees single-instruction atomics.
+This eliminates runtime LSE detection branches and guarantees single-instruction 32/64-bit atomics. The 128-bit CASP path still requires `-tags=lse2`.
 
 ---
 

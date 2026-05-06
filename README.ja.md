@@ -20,7 +20,7 @@ var counter atomix.Int64
 
 // サフィックス付きメソッド API
 counter.AddRelaxed(1)    // Relaxed：同期なし
-counter.Add(1)           // AcqRel：デフォルトの安全なオーダリング
+counter.Add(1)           // AcqRel：デフォルトの RMW オーダリング
 
 // 生メモリ用ポインタ API
 var flags int32
@@ -54,16 +54,16 @@ go get code.hybscloud.com/atomix
 - Store 操作：Relaxed
 - 読み取り-変更-書き込み操作：AcqRel
 
-**注意：** sync/atomic は Load に acquire、Store に release セマンティクスを使用する（x86 では逐次一貫性）。atomix は Relaxed をデフォルトとし、ウィークオーダーアーキテクチャで異なる命令にマッピングされる（例：ARM64 の LDR と LDAR）。sync/atomic 相当のオーダリングが必要な場合は `LoadAcquire`/`StoreRelease` を使用すること。
+**注意：** sync/atomic 操作は逐次一貫性を持つ。atomix は Load と Store で Relaxed をデフォルトとし、ウィークオーダーアーキテクチャで異なる命令にマッピングされる（例：ARM64 の LDR と LDAR）。acquire/release の同期辺が必要な場合は `LoadAcquire`/`StoreRelease` を使用すること。
 
-### 各オーダリングの使用場面
+### オーダリング選択表
 
 | 使用場面 | オーダリング | 理由 |
 |----------|--------------|------|
 | 統計カウンタ | Relaxed | 同期不要、最終的一貫性で十分 |
 | 参照カウント | AcqRel | 解放前にオブジェクト状態の可視性を保証 |
 | プロデューサー-コンシューマーフラグ | Release/Acquire | プロデューサーがデータを release、コンシューマーが acquire |
-| スピンロック獲得 | Acquire | クリティカルセクションの読み取りは prior writes を参照必須 |
+| スピンロック獲得 | Acquire | クリティカルセクションの読み取りは以前の書き込みを見る必要がある |
 | スピンロック解放 | Release | クリティカルセクションの書き込みはアンロック前に完了必須 |
 | シーケンスロック | AcqRel | 双方向でオーダリングが必要 |
 
@@ -106,7 +106,7 @@ var a, b atomix.Int64Padded  // 64 バイト間隔を保証
 | `And`, `Or`, `Xor` | 旧値 | アトミックビット演算 |
 | `Max`, `Min` | 旧値 | アトミック最大/最小 |
 
-**戻り値の意味:** Add/Sub/Inc/Dec は操作**後**の新しい値を返す（sync/atomic と同一）。Swap/And/Or/Xor/Max/Min は操作前の旧値を返す。
+**戻り値の意味:** ラッパー型の Add/Sub/Inc/Dec とポインタベースの 32/64/uintptr Add/Sub は**新値**を返す。ポインタベースの `MemoryOrder.AddInt128` と `MemoryOrder.AddUint128` は**旧値**を返す。Swap/And/Or/Xor/Max/Min は**旧値**を返す。
 
 ### CompareAndSwap と CompareExchange
 
@@ -157,7 +157,9 @@ v.Store(lo, hi)
 |----------------|----------------|
 | amd64 | `LOCK CMPXCHG16B` |
 | arm64 | `LDXP/STXP`（デフォルト）または `CASP`（`-tags=lse2`） |
-| riscv64、loong64 | スピンロックエミュレーション（LL/SC 下位64ビット） |
+| riscv64、loong64 | riscv64 は下位 64 ビット LR/SC、loong64 は LL/SC エミュレーション。真の 128 ビットアトミック性ではない |
+
+riscv64 と loong64 では、128 ビット値の `SwapAcquire`、`SwapRelease`、`SwapAcqRel` は下位 64 ビットの relaxed swap 経路にエイリアスする。acquire/release の公開が必要な場合は、別の 32/64 ビット同期プリミティブまたは外部同期を使用すること。
 
 **注意:** 128 ビットアトミック操作は主にダブルワード CAS パターン（バージョンカウンタ付きロックフリーデータ構造など）に有用。
 
@@ -170,13 +172,13 @@ x86-64 は Total Store Ordering（TSO）を提供する強いメモリモデル�
 - すべてのストアは暗黙の release セマンティクスを持つ
 - ストア-ロード順序は明示的バリア（MFENCE）またはロック命令を必要とする
 
-したがって、x86-64 ではすべてのオーダリング変種が同一の機械語にコンパイルされる。x86-64 での明示的オーダリングの主な利点はドキュメント化と移植性。
+したがって、x86-64 ではすべてのオーダリング変種が同一の機械語にコンパイルされる。x86-64 での明示的オーダリングの主な役割はドキュメント化と移植性。
 
 | 操作 | 命令 | 備考 |
 |------|------|------|
 | Load | `MOV` | 通常のメモリアクセス |
 | Store | `MOV` | 通常のメモリアクセス |
-| Add | `LOCK XADD` | 旧値を返す |
+| Add | `LOCK XADD` | 命令は旧オペランドを返す。新値を返す Add API は命令後に計算する |
 | Swap | `XCHG` | 暗黙の LOCK |
 | CAS | `LOCK CMPXCHG` | |
 | And/Or/Xor | `LOCK CMPXCHG` ループ | CAS ループで旧値を返す |
@@ -186,7 +188,7 @@ Load と Store はコンパイラインライン化のため純粋な Go で実�
 
 ### ARM64（弱オーダー）
 
-ARM64 は弱いメモリモデルで、明示的なオーダリング命令を必要とする。LSE（Large System Extensions）はオーダリングサフィックス付きのアトミック命令を提供：
+ARM64 は弱いメモリモデルで、明示的なオーダリング命令を必要とする。atomix は 32/64 ビット LSE アトミックのパッケージベースラインを ARMv8.4+ として文書化する。128 ビット LL/SC 経路は別途 ARMv8.1+ として文書化する。LSE（Large System Extensions）はオーダリングサフィックス付きのアトミック命令を提供：
 
 **サフィックスの意味：** サフィックスなし = Relaxed、`A` = Acquire、`L` = Release、`AL` = Acquire-Release
 
@@ -209,10 +211,10 @@ Relaxed load/store はインライン化のため純粋な Go で実装。その
 
 | ビルドタグ | 命令 | 対象ハードウェア |
 |------------|------|------------------|
-| （デフォルト） | `LDXP/STXP`（LL/SC ループ） | 全 ARMv8+ |
+| （デフォルト） | `LDXP/STXP`（LL/SC ループ） | ARMv8.1+ LL/SC 経路 |
 | `-tags=lse2` | `CASP`（単一命令） | ARMv8.4+ LSE2 搭載 |
 
-LL/SC（Load-Link/Store-Conditional）は競合時にリトライ。CASP は単一命令でアトミック性を提供するが、より新しいハードウェアが必要。
+LL/SC（Load-Link/Store-Conditional）は競合時にリトライし、ARMv8.1+ として文書化する。CASP は ARMv8.4+ LSE2 で単一命令のアトミック性を提供する。
 
 ### RISC-V 64 ビット
 
@@ -226,7 +228,7 @@ RISC-V RVWMO（弱いメモリオーダリング）は明示的 fence 命令を�
 | Store Release | `FENCE RW,W` + `SD` |
 | RMW | `.aq`/`.rl` 修飾子付き `AMO` 命令 |
 
-128 ビット操作はスピンロックベースのエミュレーション。
+128 ビット操作は下位 64 ビット LR/SC エミュレーションを使用し、ティアリング読み取りが発生する可能性がある。
 
 ### LoongArch 64 ビット
 
@@ -240,7 +242,7 @@ LoongArch は DBAR（データバリア）命令を使用：
 | Store Release | `DBAR` + `ST.D` |
 | RMW | `AM*_DB` 命令 |
 
-128 ビット操作はスピンロックベースのエミュレーション。
+128 ビット操作は下位 64 ビット LL/SC エミュレーションを使用し、ティアリング読み取りが発生する可能性がある。
 
 ### フォールバック
 
@@ -257,23 +259,23 @@ LoongArch は DBAR（データバリア）命令を使用：
 
 ### sync/atomic との比較
 
-sync/atomic は逐次一貫性を提供し、これは：
-- **十分**: ほとんどのユースケースに対応
-- **移植可能**: 全アーキテクチャで動作
-- **シンプル**: 理解しやすい
+sync/atomic はすべての操作に単一の逐次一貫オーダリングを提供する：
+- 操作全体で単一のオーダリング契約
+- Go 対応アーキテクチャ間で移植可能な挙動
+- 操作ごとのオーダリング選択なし
 
-atomix を使用する場面：
-- ロックフリーデータ構造の構築
+atomix の対象：
+- ロックフリーデータ構造
 - カーネルやハードウェアインターフェース（io_uring、共有メモリ）との相互運用
 - 明示的メモリオーダリングを持つ C/C++ コードの移植
-- ARM64/RISC-V をターゲットとし、明示的なオーダリングで命令選択を制御する場合
+- 明示的なオーダリングで命令選択を制御する ARM64/RISC-V 経路
 
 ## プラットフォームサポート
 
 | プラットフォーム | 実装 |
 |------------------|------|
 | linux/amd64 | ネイティブアセンブリ |
-| linux/arm64 | ネイティブアセンブリ + LSE |
+| linux/arm64 | ネイティブアセンブリ + LSE、ARMv8.4+ パッケージベースライン |
 | linux/riscv64 | ネイティブアセンブリ（128 ビットエミュレート） |
 | linux/loong64 | ネイティブアセンブリ（128 ビットエミュレート） |
 | darwin/amd64, darwin/arm64 | ネイティブアセンブリ |
@@ -284,7 +286,7 @@ atomix を使用する場面：
 
 atomix はカスタマイズされた Go コンパイラを提供し、関数呼び出しの代わりにインラインアトミック命令を直接生成する。これにより関数呼び出しが単一の CPU 命令に変換され、呼び出しオーバーヘッドが排除される。
 
-### クイックスタート
+### コンパイラワークフロー
 
 ```bash
 # 組み込み関数対応コンパイラをインストール
@@ -293,8 +295,11 @@ make install-compiler
 # 組み込み関数対応コンパイラでビルド
 make build
 
-# 組み込み関数対応コンパイラでテスト
+# 組み込み関数対応コンパイラでテスト（テストタイムアウト 120s）
 make test
+
+# 長めのタイムアウトでベンチマークを実行
+make bench
 
 # 組み込み関数が適用されているか検証
 make verify
