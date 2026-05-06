@@ -67,7 +67,7 @@ build:
 test:
 	$(require-compiler)
 	@echo "Testing atomix with intrinsics compiler..."
-	GOROOT=$(GOROOT_INTRINSIC) $(GO_INTRINSIC) test -timeout 10m -race -covermode=atomic -coverprofile=coverage.out ./...
+	GOROOT=$(GOROOT_INTRINSIC) $(GO_INTRINSIC) test -timeout 120s -race -covermode=atomic -coverprofile=coverage.out ./...
 	@echo "✓ Tests passed"
 
 .PHONY: bench

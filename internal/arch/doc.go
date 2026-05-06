@@ -17,13 +17,17 @@
 //   - riscv64: RISC-V 64-bit with AMO atomics and limited LR/SC paths
 //   - loong64: LoongArch 64-bit with AM* atomics and limited LL/SC paths
 //
-// All other architectures fall back to sync/atomic, which provides sequential
-// consistency. Ordering variants collapse to that stronger fallback.
+// On fallback architectures, 32-bit, 64-bit, uintptr, and pointer operations
+// use sync/atomic, which provides sequential consistency. Ordering variants
+// collapse to that stronger fallback for those widths. Generic 128-bit
+// operations are non-atomic two-word sequences and require external
+// synchronization.
 //
 // # Memory Ordering
 //
 // All functions include a memory ordering suffix:
-//   - Relaxed: Atomicity only, with no synchronization ordering
+//   - Relaxed: Atomicity only for supported atomic widths, with no
+//     synchronization ordering; see 128-bit caveats below
 //   - Acquire: Loads after this see stores before a paired Release
 //   - Release: Stores before this are visible after a paired Acquire
 //   - AcqRel: Both Acquire and Release semantics (for RMW operations)
