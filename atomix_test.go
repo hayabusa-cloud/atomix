@@ -145,7 +145,7 @@ func TestInt32Add(t *testing.T) {
 	var a atomix.Int32
 	a.Store(10)
 
-	// Add returns NEW value (like sync/atomic)
+	// Add returns NEW value by atomix wrapper contract.
 	got := a.Add(5)
 	if got != 15 {
 		t.Fatalf("Add: got %d, want 15", got)
@@ -180,7 +180,7 @@ func TestInt32Sub(t *testing.T) {
 	var a atomix.Int32
 	a.Store(10)
 
-	// Sub returns NEW value (like sync/atomic)
+	// Sub returns NEW value by atomix wrapper contract.
 	got := a.Sub(3)
 	if got != 7 {
 		t.Fatalf("Sub: got %d, want 7", got)
@@ -297,7 +297,7 @@ func TestUint64Add(t *testing.T) {
 	var a atomix.Uint64
 	a.Store(100)
 
-	// Add returns NEW value (like sync/atomic)
+	// Add returns NEW value by atomix wrapper contract.
 	got := a.Add(50)
 	if got != 150 {
 		t.Fatalf("Add: got %d, want 150", got)
@@ -720,7 +720,7 @@ func TestUint32Basic(t *testing.T) {
 		t.Fatalf("Load max: got %x, want 0xFFFFFFFF", got)
 	}
 
-	// Add returns NEW value (like sync/atomic); 0xFFFFFFFF + 1 = 0 (wrap)
+	// Add returns NEW value by atomix wrapper contract; 0xFFFFFFFF + 1 = 0 (wrap).
 	got := a.Add(1)
 	if got != 0 {
 		t.Fatalf("Add overflow: got %x, want 0", got)
