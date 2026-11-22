@@ -34,7 +34,7 @@ val := atomix.Acquire.LoadInt32(&flags)
 go get code.hybscloud.com/atomix
 ```
 
-**Requirements:** Go 1.26+
+**Requirements:** Go 1.27+
 
 ## Memory Ordering
 
@@ -289,7 +289,7 @@ atomix provides a customized Go compiler that emits inline atomic instructions i
 ### Compiler Workflow
 
 ```bash
-# Install the intrinsics-customized compiler
+# Install the latest Atomix compiler, or export COMPILER_TAG to select a release
 make install-compiler
 
 # Build with intrinsics
@@ -322,17 +322,18 @@ The customized compiler adds SSA operations for atomix intrinsics:
 
 ### Manual Compiler Setup
 
-If you prefer manual setup over the Makefile:
+For a manual build, set `COMPILER_TAG` to the tag of a Go 1.27+ Atomix compiler release. [Compiler releases](https://github.com/hayabusa-cloud/go/releases)
 
 ```bash
 # Clone the intrinsics compiler
-git clone --branch atomix https://github.com/hayabusa-cloud/go.git ~/github.com/go
+sdk="$HOME/sdk/$COMPILER_TAG"
+git clone --branch "$COMPILER_TAG" --depth 1 https://github.com/hayabusa-cloud/go.git "$sdk"
 
 # Build the compiler
-cd ~/github.com/go/src && ./make.bash
+(cd "$sdk/src" && ./make.bash)
 
 # Use for atomix
-GOROOT=~/github.com/go ~/github.com/go/bin/go build ./...
+GOTOOLCHAIN=local GOROOT="$sdk" "$sdk/bin/go" build ./...
 ```
 
 See [intrinsics.md](./intrinsics.md) for detailed implementation documentation.

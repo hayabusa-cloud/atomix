@@ -34,7 +34,7 @@ val := atomix.Acquire.LoadInt32(&flags)
 go get code.hybscloud.com/atomix
 ```
 
-**Requisitos:** Go 1.26+
+**Requisitos:** Go 1.27+
 
 ## Ordenamiento de Memoria
 
@@ -289,7 +289,7 @@ atomix proporciona un compilador Go personalizado que emite instrucciones atómi
 ### Flujo del Compilador
 
 ```bash
-# Instalar el compilador con intrínsecos personalizados
+# Instalar el compilador Atomix más reciente, o exportar COMPILER_TAG para elegir una versión
 make install-compiler
 
 # Compilar con intrínsecos
@@ -322,17 +322,18 @@ El compilador personalizado añade operaciones SSA para intrínsecos de atomix:
 
 ### Configuración Manual del Compilador
 
-Si prefieres configuración manual sobre el Makefile:
+Para compilar manualmente, asigna a `COMPILER_TAG` la etiqueta de una versión del compilador Atomix basada en Go 1.27 o posterior. [Versiones del compilador](https://github.com/hayabusa-cloud/go/releases)
 
 ```bash
 # Clonar el compilador con intrínsecos
-git clone --branch atomix https://github.com/hayabusa-cloud/go.git ~/github.com/go
+sdk="$HOME/sdk/$COMPILER_TAG"
+git clone --branch "$COMPILER_TAG" --depth 1 https://github.com/hayabusa-cloud/go.git "$sdk"
 
 # Compilar el compilador
-cd ~/github.com/go/src && ./make.bash
+(cd "$sdk/src" && ./make.bash)
 
 # Usar para atomix
-GOROOT=~/github.com/go ~/github.com/go/bin/go build ./...
+GOTOOLCHAIN=local GOROOT="$sdk" "$sdk/bin/go" build ./...
 ```
 
 Ver [intrinsics.md](./intrinsics.md) para documentación detallada de implementación.
