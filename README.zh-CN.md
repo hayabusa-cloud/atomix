@@ -44,7 +44,7 @@ go get code.hybscloud.com/atomix
 |--------|------|
 | **Relaxed** | 仅保证原子性，无同步或顺序约束 |
 | **Acquire** | 后续读写不能重排到此加载之前，与 Release 存储配对 |
-| **Release** | 先前读写不能重排到此存储之后，与 Acquire 加载配对 |
+| **Release** | 向使用 Acquire 的读取方发布先前的写入。除默认 arm64 实现的 128 位存储外，也保证先前读取的顺序。 |
 | **AcqRel** | 结合 Acquire 和 Release 语义，用于读-修改-写操作 |
 
 ### 内存序选择
@@ -156,7 +156,7 @@ v.Store(lo, hi)
 | 架构 | 128 位实现 |
 |------|-----------|
 | amd64 | `LOCK CMPXCHG16B` |
-| arm64 | `LDXP/STXP`（默认）或 `CASP`（`-tags=lse2`） |
+| arm64 | `LDP`/`STP` 和 `CASP` |
 | riscv64, loong64 | riscv64 使用低 64 位 LR/SC，loong64 使用 LL/SC 模拟；不是真正的 128 位原子性 |
 
 在 riscv64 和 loong64 上，128 位值的 `SwapAcquire`、`SwapRelease` 和 `SwapAcqRel` 会别名到低 64 位的 relaxed swap 路径；需要 acquire/release 发布语义时，请使用单独的 32/64 位同步原语或外部同步。
@@ -188,7 +188,7 @@ Load 和 Store 用纯 Go 实现以便编译器内联。
 
 ### ARM64（弱序）
 
-ARM64 是弱序内存模型，需要显式的顺序指令。atomix 将 32/64 位 LSE 原子的包级基线记录为 ARMv8.4+；128 位 LL/SC 路径另行记录为 ARMv8.1+。LSE（大系统扩展）提供带内存序后缀的原子指令：
+arm64 的 32/64 位原子操作使用 LSE 指令，后缀表示内存序。
 
 **后缀含义：** 无后缀 = Relaxed，`A` = Acquire，`L` = Release，`AL` = Acquire-Release
 
@@ -211,10 +211,10 @@ Relaxed 加载/存储用纯 Go 实现以便内联。其他内存序使用 LSE �
 
 | 构建标签 | 指令 | 目标硬件 |
 |----------|------|----------|
-| （默认） | `LDXP/STXP`（LL/SC 循环） | ARMv8.1+ LL/SC 路径 |
-| `-tags=lse2` | `CASP`（单指令） | ARMv8.4+ 且支持 LSE2 |
+| （默认） | `LDP`/`STP`、`CASP` | 支持 LSE2 的 ARMv8.4+ |
+| `-tags=atomix_llsc` | `LDXP`/`STXP` | 支持 LSE 的较早期 arm64 CPU |
 
-LL/SC（Load-Link/Store-Conditional）在争用时重试，并记录为 ARMv8.1+ 路径。CASP 在 ARMv8.4+ 且支持 LSE2 的硬件上提供单指令原子性。
+默认实现中，对齐的成对加载和存储要求使用内外缓存属性均为 Write-Back 的 Normal 内存，例如 Go 堆。128 位 release 存储使用 `DMB ISHST` 发布先前的写入。若先前的读取必须排在该存储之前，应对该读取使用 acquire 加载。LL/SC 实现即使在加载或 compare-exchange 失败时也需要可写内存。
 
 ### RISC-V 64 位
 
@@ -275,7 +275,7 @@ atomix 面向：
 | 平台 | 实现 |
 |------|------|
 | linux/amd64 | 原生汇编 |
-| linux/arm64 | 原生汇编，使用 LSE；ARMv8.4+ 包级基线 |
+| linux/arm64 | 默认面向支持 LSE2 的 ARMv8.4+ |
 | linux/riscv64 | 原生汇编（128 位模拟） |
 | linux/loong64 | 原生汇编（128 位模拟） |
 | darwin/amd64, darwin/arm64 | 原生汇编 |

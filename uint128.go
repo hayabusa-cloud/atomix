@@ -41,7 +41,8 @@ func (a *Uint128) StoreRelaxed(lo, hi uint64) {
 	arch.StoreUint128Relaxed(&a.v, lo, hi)
 }
 
-// StoreRelease atomically stores val with release ordering.
+// StoreRelease atomically publishes (lo, hi) after earlier writes.
+// On the default arm64 path, use an acquire load to order a prior read before this store.
 //
 //go:nosplit
 func (a *Uint128) StoreRelease(lo, hi uint64) {

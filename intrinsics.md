@@ -275,7 +275,7 @@ Per-ordering instruction selection (e.g., `LDADD` for Relaxed, `LDADDA` for Acqu
 
 ### 128-bit CAS Intrinsics
 
-**Status: Planned for compiler intrinsics; implemented through assembly stubs today.** AMD64 uses `LOCK CMPXCHG16B`. ARM64 uses `LDXP/STXP` by default and `CASP` with `-tags=lse2`. RISC-V and LoongArch use low-word LR/SC or LL/SC emulation rather than true 128-bit atomic instructions.
+**Status: Planned for compiler intrinsics; implemented through assembly stubs today.** AMD64 uses `LOCK CMPXCHG16B`. ARM64 uses LSE2 pair loads/stores and LSE `CASP` by default. Use `-tags=atomix_llsc` for older arm64 CPUs with LSE. RISC-V and LoongArch use low-word LR/SC or LL/SC emulation rather than true 128-bit atomic instructions.
 
 ### Build and Verify
 
@@ -478,7 +478,7 @@ If you see `CALL` instructions to atomix functions, intrinsics are not being app
 GOARM64=v8.4 go build -o app .
 ```
 
-This eliminates runtime LSE detection branches and guarantees single-instruction 32/64-bit atomics. The 128-bit CASP path still requires `-tags=lse2`.
+The Atomix compiler emits LSE instructions directly for 32/64-bit RMW intrinsics. The default 128-bit assembly selects its CASP variant at build time.
 
 ---
 

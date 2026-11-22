@@ -64,8 +64,8 @@
 //
 // 128-bit operations are available on all supported architectures:
 //   - amd64: CMPXCHG16B instruction (requires 16-byte alignment)
-//   - arm64: LDXP/STXP (default LL/SC path, documented for ARMv8.1+) or
-//     CASP with -tags=lse2 for ARMv8.4+ with LSE2
+//   - arm64: LSE2 pair loads/stores and LSE CASP by default,
+//     or exclusive pairs with -tags=atomix_llsc
 //   - riscv64/loong64: Emulated via low-word LR/SC or LL/SC; Load/Store and
 //     CAS/CAX paths use ordering-specific fences/barriers, but Swap128
 //     non-relaxed variants alias relaxed swap; not true 128-bit atomicity

@@ -44,7 +44,7 @@ The library implements four orderings from the C++11 memory model:
 |----------|-----------|
 | **Relaxed** | Atomicity only. No synchronization or ordering constraints. |
 | **Acquire** | Subsequent reads/writes cannot be reordered before this load. Pairs with Release stores. |
-| **Release** | Prior reads/writes cannot be reordered after this store. Pairs with Acquire loads. |
+| **Release** | Publishes prior writes to an acquiring reader. Also orders prior reads, except for default arm64 128-bit stores. |
 | **AcqRel** | Combines Acquire and Release semantics. For read-modify-write operations. |
 
 ### Ordering Selection
@@ -156,7 +156,7 @@ v.Store(lo, hi)
 | Architecture | 128-bit Implementation |
 |--------------|------------------------|
 | amd64 | `LOCK CMPXCHG16B` |
-| arm64 | `LDXP/STXP` (default) or `CASP` (`-tags=lse2`) |
+| arm64 | `LDP`/`STP` and `CASP` |
 | riscv64, loong64 | Low-word LR/SC on riscv64 or LL/SC on loong64; not true 128-bit atomicity |
 
 On riscv64 and loong64, 128-bit `SwapAcquire`, `SwapRelease`, and `SwapAcqRel` alias the relaxed low-word swap path; use a separate 32/64-bit synchronization primitive or external synchronization when acquire/release publication is required.
@@ -188,7 +188,7 @@ Load and Store are implemented in pure Go for compiler inlining.
 
 ### ARM64 (Weakly Ordered)
 
-ARM64 has a weakly ordered memory model requiring explicit ordering instructions. atomix documents ARMv8.4+ as the ARM64 package baseline for LSE-backed 32/64-bit atomics. The default 128-bit LL/SC path is documented separately for ARMv8.1+. LSE (Large System Extensions) provides atomic instructions with ordering suffixes:
+arm64 uses LSE instructions for 32/64-bit atomics. The suffix specifies the ordering.
 
 **Suffix meanings:** No suffix = Relaxed, `A` = Acquire, `L` = Release, `AL` = Acquire-Release
 
@@ -211,10 +211,10 @@ Relaxed load/store are implemented in pure Go for inlining. Other orderings use 
 
 | Build Tag | Instructions | Target Hardware |
 |-----------|--------------|-----------------|
-| (default) | `LDXP/STXP` (LL/SC loop) | ARMv8.1+ LL/SC path |
-| `-tags=lse2` | `CASP` (single instruction) | ARMv8.4+ with LSE2 |
+| (default) | `LDP`/`STP`, `CASP` | ARMv8.4+ with LSE2 |
+| `-tags=atomix_llsc` | `LDXP`/`STXP` | Older arm64 CPUs with LSE |
 
-LL/SC (Load-Link/Store-Conditional) retries on contention and is documented for ARMv8.1+. CASP provides single-instruction atomicity on ARMv8.4+ with LSE2.
+On the default path, aligned pair loads and stores require Normal memory with Inner and Outer Write-Back cacheability, as on the Go heap. A 128-bit release store publishes earlier writes with `DMB ISHST`. To order an earlier read before the store, use an acquire load for that read. The LL/SC path needs writable storage even for loads and failed compare-exchange.
 
 ### RISC-V 64-bit
 
@@ -275,7 +275,7 @@ atomix targets:
 | Platform | Implementation |
 |----------|----------------|
 | linux/amd64 | Native assembly |
-| linux/arm64 | Native assembly with LSE; ARMv8.4+ package baseline |
+| linux/arm64 | ARMv8.4+ with LSE2 by default |
 | linux/riscv64 | Native assembly (128-bit emulated) |
 | linux/loong64 | Native assembly (128-bit emulated) |
 | darwin/amd64, darwin/arm64 | Native assembly |

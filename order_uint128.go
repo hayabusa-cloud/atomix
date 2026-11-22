@@ -20,6 +20,7 @@ func (o MemoryOrder) LoadUint128(addr *Uint128) (lo, hi uint64) {
 }
 
 // StoreUint128 atomically stores (lo, hi) to *addr with the specified memory ordering.
+// Release follows the publication contract of [Uint128.StoreRelease].
 // addr MUST be 16-byte aligned; use PlaceAlignedUint128 to ensure alignment.
 // Unknown orderings fallback to Release.
 //

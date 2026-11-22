@@ -12,8 +12,8 @@
 //   SWPAD/SWPLD/SWPALD, LDADDAD/LDADDLD/LDADDALD, CASAD/CASLD/CASALD
 //
 // 128-bit operations are in separate files with build tags:
-//   asm_arm64_128.s      - LL/SC (LDXP/STXP), default, faster on Graviton4
-//   asm_arm64_128_lse2.s - CASP (LSE2), use -tags=lse2
+//   asm_arm64_128_lse2.s - LSE2 pair loads/stores and LSE CASP (default)
+//   asm_arm64_128.s      - exclusive pairs with -tags=atomix_llsc
 //
 // DMB barrier codes:
 //   $0x9 = ISHLD (acquire barrier)
@@ -76,7 +76,7 @@ TEXT ·SwapInt32AcqRel(SB), NOSPLIT, $0-20
 // CAS relaxed
 // ARM64 CASW: R1 (expected) is overwritten with loaded value
 // Must save expected before CAS, then compare loaded vs saved expected
-TEXT ·CasInt32Relaxed(SB), NOSPLIT, $0-21
+TEXT ·CasInt32Relaxed(SB), NOSPLIT, $0-17
 	MOVD	addr+0(FP), R0
 	MOVW	old+8(FP), R1
 	MOVW	new+12(FP), R2
@@ -88,7 +88,7 @@ TEXT ·CasInt32Relaxed(SB), NOSPLIT, $0-21
 	RET
 
 // CAS acquire: CASAW
-TEXT ·CasInt32Acquire(SB), NOSPLIT, $0-21
+TEXT ·CasInt32Acquire(SB), NOSPLIT, $0-17
 	MOVD	addr+0(FP), R0
 	MOVW	old+8(FP), R1
 	MOVW	new+12(FP), R2
@@ -100,7 +100,7 @@ TEXT ·CasInt32Acquire(SB), NOSPLIT, $0-21
 	RET
 
 // CAS release: CASLW
-TEXT ·CasInt32Release(SB), NOSPLIT, $0-21
+TEXT ·CasInt32Release(SB), NOSPLIT, $0-17
 	MOVD	addr+0(FP), R0
 	MOVW	old+8(FP), R1
 	MOVW	new+12(FP), R2
@@ -112,7 +112,7 @@ TEXT ·CasInt32Release(SB), NOSPLIT, $0-21
 	RET
 
 // CAS acqrel: CASALW
-TEXT ·CasInt32AcqRel(SB), NOSPLIT, $0-21
+TEXT ·CasInt32AcqRel(SB), NOSPLIT, $0-17
 	MOVD	addr+0(FP), R0
 	MOVW	old+8(FP), R1
 	MOVW	new+12(FP), R2
@@ -125,7 +125,7 @@ TEXT ·CasInt32AcqRel(SB), NOSPLIT, $0-21
 
 // CompareExchange relaxed (returns old value)
 // ARM64 CAS: R1 is overwritten with loaded value from memory
-TEXT ·CaxInt32Relaxed(SB), NOSPLIT, $0-24
+TEXT ·CaxInt32Relaxed(SB), NOSPLIT, $0-20
 	MOVD	addr+0(FP), R0
 	MOVW	old+8(FP), R1
 	MOVW	new+12(FP), R2
@@ -134,7 +134,7 @@ TEXT ·CaxInt32Relaxed(SB), NOSPLIT, $0-24
 	RET
 
 // CompareExchange acquire: CASAW
-TEXT ·CaxInt32Acquire(SB), NOSPLIT, $0-24
+TEXT ·CaxInt32Acquire(SB), NOSPLIT, $0-20
 	MOVD	addr+0(FP), R0
 	MOVW	old+8(FP), R1
 	MOVW	new+12(FP), R2
@@ -143,7 +143,7 @@ TEXT ·CaxInt32Acquire(SB), NOSPLIT, $0-24
 	RET
 
 // CompareExchange release: CASLW
-TEXT ·CaxInt32Release(SB), NOSPLIT, $0-24
+TEXT ·CaxInt32Release(SB), NOSPLIT, $0-20
 	MOVD	addr+0(FP), R0
 	MOVW	old+8(FP), R1
 	MOVW	new+12(FP), R2
@@ -152,7 +152,7 @@ TEXT ·CaxInt32Release(SB), NOSPLIT, $0-24
 	RET
 
 // CompareExchange acqrel: CASALW
-TEXT ·CaxInt32AcqRel(SB), NOSPLIT, $0-24
+TEXT ·CaxInt32AcqRel(SB), NOSPLIT, $0-20
 	MOVD	addr+0(FP), R0
 	MOVW	old+8(FP), R1
 	MOVW	new+12(FP), R2
@@ -220,28 +220,28 @@ TEXT ·SwapUint32Release(SB), NOSPLIT, $0-20
 TEXT ·SwapUint32AcqRel(SB), NOSPLIT, $0-20
 	JMP	·SwapInt32AcqRel(SB)
 
-TEXT ·CasUint32Relaxed(SB), NOSPLIT, $0-21
+TEXT ·CasUint32Relaxed(SB), NOSPLIT, $0-17
 	JMP	·CasInt32Relaxed(SB)
 
-TEXT ·CasUint32Acquire(SB), NOSPLIT, $0-21
+TEXT ·CasUint32Acquire(SB), NOSPLIT, $0-17
 	JMP	·CasInt32Acquire(SB)
 
-TEXT ·CasUint32Release(SB), NOSPLIT, $0-21
+TEXT ·CasUint32Release(SB), NOSPLIT, $0-17
 	JMP	·CasInt32Release(SB)
 
-TEXT ·CasUint32AcqRel(SB), NOSPLIT, $0-21
+TEXT ·CasUint32AcqRel(SB), NOSPLIT, $0-17
 	JMP	·CasInt32AcqRel(SB)
 
-TEXT ·CaxUint32Relaxed(SB), NOSPLIT, $0-24
+TEXT ·CaxUint32Relaxed(SB), NOSPLIT, $0-20
 	JMP	·CaxInt32Relaxed(SB)
 
-TEXT ·CaxUint32Acquire(SB), NOSPLIT, $0-24
+TEXT ·CaxUint32Acquire(SB), NOSPLIT, $0-20
 	JMP	·CaxInt32Acquire(SB)
 
-TEXT ·CaxUint32Release(SB), NOSPLIT, $0-24
+TEXT ·CaxUint32Release(SB), NOSPLIT, $0-20
 	JMP	·CaxInt32Release(SB)
 
-TEXT ·CaxUint32AcqRel(SB), NOSPLIT, $0-24
+TEXT ·CaxUint32AcqRel(SB), NOSPLIT, $0-20
 	JMP	·CaxInt32AcqRel(SB)
 
 TEXT ·AddUint32Relaxed(SB), NOSPLIT, $0-20
@@ -581,12 +581,6 @@ TEXT ·CaxPointerRelease(SB), NOSPLIT, $0-32
 
 TEXT ·CaxPointerAcqRel(SB), NOSPLIT, $0-32
 	JMP	·CaxInt64AcqRel(SB)
-
-// =============================================================================
-// 128-bit operations are in separate files:
-//   asm_arm64_128.s      - LL/SC implementation (default, faster on most CPUs)
-//   asm_arm64_128_lse2.s - CASP implementation (use -tags=lse2)
-// =============================================================================
 
 // =============================================================================
 // Barrier operations

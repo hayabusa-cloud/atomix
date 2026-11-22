@@ -376,67 +376,45 @@ TEXT ·CaxPointerAcqRel(SB), NOSPLIT, $0-32
 // =============================================================================
 
 // Load 128-bit: Use LOCK CMPXCHG16B with same old/new to read atomically
-TEXT ·LoadUint128Relaxed(SB), NOSPLIT, $16-24
-	MOVQ	BX, 0(SP)
+TEXT ·LoadUint128Relaxed(SB), NOSPLIT, $0-24
 	MOVQ	addr+0(FP), DI
-	XORQ	AX, AX
-	XORQ	DX, DX
-	XORQ	BX, BX
-	XORQ	CX, CX
+	XORL	AX, AX
+	XORL	DX, DX
+	XORL	BX, BX
+	XORL	CX, CX
 	LOCK
 	CMPXCHG16B	(DI)
 	MOVQ	AX, lo+8(FP)
 	MOVQ	DX, hi+16(FP)
-	MOVQ	0(SP), BX
 	RET
 
-TEXT ·LoadUint128Acquire(SB), NOSPLIT, $0-24
-	JMP	·LoadUint128Relaxed(SB)
-
-// Store 128-bit: CAS loop until success
-TEXT ·StoreUint128Relaxed(SB), NOSPLIT, $16-24
-	MOVQ	BX, 0(SP)
+// Seed the expected pair with ordinary loads. CMPXCHG16B validates it and
+// supplies the next expected pair on failure.
+TEXT ·StoreUint128Relaxed(SB), NOSPLIT, $0-24
 	MOVQ	addr+0(FP), DI
 	MOVQ	lo+8(FP), BX
 	MOVQ	hi+16(FP), CX
-	// Load current value
-	XORQ	AX, AX
-	XORQ	DX, DX
-	LOCK
-	CMPXCHG16B	(DI)
-	JE	store128_done
+	MOVQ	(DI), AX
+	MOVQ	8(DI), DX
 store128_retry:
 	LOCK
 	CMPXCHG16B	(DI)
 	JNE	store128_retry
-store128_done:
-	MOVQ	0(SP), BX
 	RET
 
-TEXT ·StoreUint128Release(SB), NOSPLIT, $0-24
-	JMP	·StoreUint128Relaxed(SB)
-
-// Swap 128-bit: CAS loop until success, returns old value
-// Frame layout: addr+0, newLo+8, newHi+16, oldLo+24, oldHi+32 = 40 bytes
-TEXT ·SwapUint128AcqRel(SB), NOSPLIT, $16-40
-	MOVQ	BX, 0(SP)
+// Swap uses the same loop and returns the pair replaced by the successful CAS.
+TEXT ·SwapUint128AcqRel(SB), NOSPLIT, $0-40
 	MOVQ	addr+0(FP), DI
 	MOVQ	newLo+8(FP), BX
 	MOVQ	newHi+16(FP), CX
-	// Load current value
-	XORQ	AX, AX
-	XORQ	DX, DX
-	LOCK
-	CMPXCHG16B	(DI)
-	JE	swap128_done
+	MOVQ	(DI), AX
+	MOVQ	8(DI), DX
 swap128_retry:
 	LOCK
 	CMPXCHG16B	(DI)
 	JNE	swap128_retry
-swap128_done:
 	MOVQ	AX, oldLo+24(FP)
 	MOVQ	DX, oldHi+32(FP)
-	MOVQ	0(SP), BX
 	RET
 
 TEXT ·SwapUint128Relaxed(SB), NOSPLIT, $0-40
@@ -449,8 +427,7 @@ TEXT ·SwapUint128Release(SB), NOSPLIT, $0-40
 	JMP	·SwapUint128AcqRel(SB)
 
 // CAS 128-bit: LOCK CMPXCHG16B
-TEXT ·CasUint128AcqRel(SB), NOSPLIT, $16-41
-	MOVQ	BX, 0(SP)
+TEXT ·CasUint128AcqRel(SB), NOSPLIT, $0-41
 	MOVQ	addr+0(FP), DI
 	MOVQ	oldLo+8(FP), AX
 	MOVQ	oldHi+16(FP), DX
@@ -459,21 +436,10 @@ TEXT ·CasUint128AcqRel(SB), NOSPLIT, $16-41
 	LOCK
 	CMPXCHG16B	(DI)
 	SETEQ	ret+40(FP)
-	MOVQ	0(SP), BX
 	RET
 
-TEXT ·CasUint128Relaxed(SB), NOSPLIT, $0-41
-	JMP	·CasUint128AcqRel(SB)
-
-TEXT ·CasUint128Acquire(SB), NOSPLIT, $0-41
-	JMP	·CasUint128AcqRel(SB)
-
-TEXT ·CasUint128Release(SB), NOSPLIT, $0-41
-	JMP	·CasUint128AcqRel(SB)
-
 // CompareExchange 128-bit: returns old value
-TEXT ·CaxUint128AcqRel(SB), NOSPLIT, $16-56
-	MOVQ	BX, 0(SP)
+TEXT ·CaxUint128AcqRel(SB), NOSPLIT, $0-56
 	MOVQ	addr+0(FP), DI
 	MOVQ	oldLo+8(FP), AX
 	MOVQ	oldHi+16(FP), DX
@@ -483,7 +449,6 @@ TEXT ·CaxUint128AcqRel(SB), NOSPLIT, $16-56
 	CMPXCHG16B	(DI)
 	MOVQ	AX, lo+40(FP)
 	MOVQ	DX, hi+48(FP)
-	MOVQ	0(SP), BX
 	RET
 
 TEXT ·CaxUint128Relaxed(SB), NOSPLIT, $0-56
