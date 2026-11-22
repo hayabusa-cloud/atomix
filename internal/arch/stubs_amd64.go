@@ -336,20 +336,24 @@ func CaxPointerAcqRel(addr *unsafe.Pointer, old, new unsafe.Pointer) unsafe.Poin
 // 128-bit Operations
 // =============================================================================
 
-// 128-bit operations use CMPXCHG16B instruction.
-// Requires 16-byte alignment for correctness.
+// LOCK CMPXCHG16B implements every ordering on a 16-byte-aligned pair.
+// Load, store and boolean CAS aliases inline. Swap and compare-exchange use
+// assembly tail jumps to keep the signed and unsigned Go methods inlineable.
 
 //go:noescape
 func LoadUint128Relaxed(addr *[16]byte) (lo, hi uint64)
 
-//go:noescape
-func LoadUint128Acquire(addr *[16]byte) (lo, hi uint64)
+func LoadUint128Acquire(addr *[16]byte) (lo, hi uint64) {
+	lo, hi = LoadUint128Relaxed(addr)
+	return
+}
 
 //go:noescape
 func StoreUint128Relaxed(addr *[16]byte, lo, hi uint64)
 
-//go:noescape
-func StoreUint128Release(addr *[16]byte, lo, hi uint64)
+func StoreUint128Release(addr *[16]byte, lo, hi uint64) {
+	StoreUint128Relaxed(addr, lo, hi)
+}
 
 //go:noescape
 func SwapUint128Relaxed(addr *[16]byte, newLo, newHi uint64) (oldLo, oldHi uint64)
@@ -363,14 +367,17 @@ func SwapUint128Release(addr *[16]byte, newLo, newHi uint64) (oldLo, oldHi uint6
 //go:noescape
 func SwapUint128AcqRel(addr *[16]byte, newLo, newHi uint64) (oldLo, oldHi uint64)
 
-//go:noescape
-func CasUint128Relaxed(addr *[16]byte, oldLo, oldHi, newLo, newHi uint64) bool
+func CasUint128Relaxed(addr *[16]byte, oldLo, oldHi, newLo, newHi uint64) bool {
+	return CasUint128AcqRel(addr, oldLo, oldHi, newLo, newHi)
+}
 
-//go:noescape
-func CasUint128Acquire(addr *[16]byte, oldLo, oldHi, newLo, newHi uint64) bool
+func CasUint128Acquire(addr *[16]byte, oldLo, oldHi, newLo, newHi uint64) bool {
+	return CasUint128AcqRel(addr, oldLo, oldHi, newLo, newHi)
+}
 
-//go:noescape
-func CasUint128Release(addr *[16]byte, oldLo, oldHi, newLo, newHi uint64) bool
+func CasUint128Release(addr *[16]byte, oldLo, oldHi, newLo, newHi uint64) bool {
+	return CasUint128AcqRel(addr, oldLo, oldHi, newLo, newHi)
+}
 
 //go:noescape
 func CasUint128AcqRel(addr *[16]byte, oldLo, oldHi, newLo, newHi uint64) bool

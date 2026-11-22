@@ -44,7 +44,7 @@ go get code.hybscloud.com/atomix
 |--------------|----------------|
 | **Relaxed** | 原子性のみ。同期や順序制約なし。 |
 | **Acquire** | 後続の読み書きはこのロード前に並べ替え不可。Release ストアとペアで使用。 |
-| **Release** | 先行する読み書きはこのストア後に並べ替え不可。Acquire ロードとペアで使用。 |
+| **Release** | 先行する書き込みを Acquire で読み取る側に公開する。デフォルトの arm64 の 128 ビットストアを除き、先行する読み込みも順序付ける。 |
 | **AcqRel** | Acquire と Release の両方のセマンティクスを組み合わせ。読み取り-変更-書き込み操作に使用。 |
 
 ### オーダリングの選択
@@ -156,7 +156,7 @@ v.Store(lo, hi)
 | アーキテクチャ | 128 ビット実装 |
 |----------------|----------------|
 | amd64 | `LOCK CMPXCHG16B` |
-| arm64 | `LDXP/STXP`（デフォルト）または `CASP`（`-tags=lse2`） |
+| arm64 | `LDP`/`STP` と `CASP` |
 | riscv64、loong64 | riscv64 は下位 64 ビット LR/SC、loong64 は LL/SC エミュレーション。真の 128 ビットアトミック性ではない |
 
 riscv64 と loong64 では、128 ビット値の `SwapAcquire`、`SwapRelease`、`SwapAcqRel` は下位 64 ビットの relaxed swap 経路にエイリアスする。acquire/release の公開が必要な場合は、別の 32/64 ビット同期プリミティブまたは外部同期を使用すること。
@@ -188,7 +188,7 @@ Load と Store はコンパイラインライン化のため純粋な Go で実�
 
 ### ARM64（弱オーダー）
 
-ARM64 は弱いメモリモデルで、明示的なオーダリング命令を必要とする。atomix は 32/64 ビット LSE アトミックのパッケージベースラインを ARMv8.4+ として文書化する。128 ビット LL/SC 経路は別途 ARMv8.1+ として文書化する。LSE（Large System Extensions）はオーダリングサフィックス付きのアトミック命令を提供：
+arm64 は 32/64 ビットのアトミック操作に LSE 命令を使う。サフィックスはメモリオーダーを示す。
 
 **サフィックスの意味：** サフィックスなし = Relaxed、`A` = Acquire、`L` = Release、`AL` = Acquire-Release
 
@@ -211,10 +211,10 @@ Relaxed load/store はインライン化のため純粋な Go で実装。その
 
 | ビルドタグ | 命令 | 対象ハードウェア |
 |------------|------|------------------|
-| （デフォルト） | `LDXP/STXP`（LL/SC ループ） | ARMv8.1+ LL/SC 経路 |
-| `-tags=lse2` | `CASP`（単一命令） | ARMv8.4+ LSE2 搭載 |
+| （デフォルト） | `LDP`/`STP`、`CASP` | LSE2 搭載の ARMv8.4+ |
+| `-tags=atomix_llsc` | `LDXP`/`STXP` | LSE 搭載の旧世代 arm64 CPU |
 
-LL/SC（Load-Link/Store-Conditional）は競合時にリトライし、ARMv8.1+ として文書化する。CASP は ARMv8.4+ LSE2 で単一命令のアトミック性を提供する。
+デフォルトの実装で整列したペアをロード・ストアするには、Go ヒープと同様に Inner と Outer がともに Write-Back の Normal メモリが必要。128 ビットの release ストアは `DMB ISHST` で先行する書き込みを公開する。先行する読み込みをストアより前に順序付ける必要がある場合は、その読み込みに acquire を使う。LL/SC 実装では、ロード時や compare-exchange の失敗時にも書き込み可能なメモリが必要。
 
 ### RISC-V 64 ビット
 
@@ -275,7 +275,7 @@ atomix の対象：
 | プラットフォーム | 実装 |
 |------------------|------|
 | linux/amd64 | ネイティブアセンブリ |
-| linux/arm64 | ネイティブアセンブリ + LSE、ARMv8.4+ パッケージベースライン |
+| linux/arm64 | デフォルトは LSE2 搭載の ARMv8.4+ |
 | linux/riscv64 | ネイティブアセンブリ（128 ビットエミュレート） |
 | linux/loong64 | ネイティブアセンブリ（128 ビットエミュレート） |
 | darwin/amd64, darwin/arm64 | ネイティブアセンブリ |

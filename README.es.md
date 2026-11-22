@@ -44,7 +44,7 @@ La biblioteca implementa cuatro ordenamientos del modelo de memoria C++11:
 |--------------|-----------|
 | **Relaxed** | Solo atomicidad. Sin restricciones de sincronización u orden. |
 | **Acquire** | Las lecturas y escrituras posteriores no pueden reordenarse antes de esta carga. Se empareja con stores Release. |
-| **Release** | Las lecturas y escrituras anteriores no pueden reordenarse después de este store. Se empareja con loads Acquire. |
+| **Release** | Publica las escrituras anteriores para un lector que usa Acquire. También ordena las lecturas anteriores, salvo en las escrituras de 128 bits de la implementación arm64 por defecto. |
 | **AcqRel** | Combina semánticas Acquire y Release. Para operaciones lectura-modificación-escritura. |
 
 ### Selección de Ordenamiento
@@ -156,7 +156,7 @@ v.Store(lo, hi)
 | Arquitectura | Implementación 128 bits |
 |--------------|-------------------------|
 | amd64 | `LOCK CMPXCHG16B` |
-| arm64 | `LDXP/STXP` (defecto) o `CASP` (`-tags=lse2`) |
+| arm64 | `LDP`/`STP` y `CASP` |
 | riscv64, loong64 | LR/SC de los 64 bits bajos en riscv64 o LL/SC en loong64; no es atomicidad real de 128 bits |
 
 En riscv64 y loong64, `SwapAcquire`, `SwapRelease` y `SwapAcqRel` para valores de 128 bits usan la misma ruta relaxed de intercambio del word bajo; use una primitiva de sincronización separada de 32/64 bits o sincronización externa cuando se requiera publicación acquire/release.
@@ -188,7 +188,7 @@ Load y Store están implementados en Go puro para inlining del compilador.
 
 ### ARM64 (Débilmente Ordenado)
 
-ARM64 tiene un modelo de memoria débil que requiere instrucciones de ordenamiento explícitas. atomix documenta ARMv8.4+ como línea base del paquete para los atómicos LSE de 32/64 bits. La ruta LL/SC de 128 bits se documenta por separado para ARMv8.1+. LSE (Large System Extensions) proporciona instrucciones atómicas con sufijos de ordenamiento:
+arm64 usa instrucciones LSE para las operaciones atómicas de 32 y 64 bits. El sufijo indica el orden de memoria.
 
 **Significado de sufijos:** Sin sufijo = Relaxed, `A` = Acquire, `L` = Release, `AL` = Acquire-Release
 
@@ -211,10 +211,10 @@ Load/store relajados están implementados en Go puro para inlining. Otros ordena
 
 | Tag de Build | Instrucciones | Hardware Objetivo |
 |--------------|---------------|-------------------|
-| (defecto) | `LDXP/STXP` (bucle LL/SC) | Ruta LL/SC ARMv8.1+ |
-| `-tags=lse2` | `CASP` (instrucción única) | ARMv8.4+ con LSE2 |
+| (por defecto) | `LDP`/`STP`, `CASP` | ARMv8.4+ con LSE2 |
+| `-tags=atomix_llsc` | `LDXP`/`STXP` | CPU arm64 anteriores con LSE |
 
-LL/SC (Load-Link/Store-Conditional) reintenta en contención y se documenta para ARMv8.1+. CASP proporciona atomicidad de instrucción única en ARMv8.4+ con LSE2.
+Por defecto, las cargas y escrituras de pares alineados requieren memoria Normal con caché Write-Back interna y externa, como la del heap de Go. Una escritura release de 128 bits publica las escrituras anteriores con `DMB ISHST`. Para ordenar una lectura anterior con respecto a la escritura, use una carga acquire para esa lectura. La ruta LL/SC necesita memoria con permiso de escritura incluso para las cargas y los compare-exchange fallidos.
 
 ### RISC-V 64 bits
 
@@ -275,7 +275,7 @@ atomix está orientado a:
 | Plataforma | Implementación |
 |------------|----------------|
 | linux/amd64 | Ensamblador nativo |
-| linux/arm64 | Ensamblador nativo con LSE; línea base del paquete ARMv8.4+ |
+| linux/arm64 | ARMv8.4+ con LSE2 por defecto |
 | linux/riscv64 | Ensamblador nativo (128 bits emulado) |
 | linux/loong64 | Ensamblador nativo (128 bits emulado) |
 | darwin/amd64, darwin/arm64 | Ensamblador nativo |

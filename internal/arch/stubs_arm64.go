@@ -20,7 +20,7 @@ import "unsafe"
 //   - Relaxed Load/Store: Pure Go in loadstore_arm64.go (inlinable)
 //   - Acquire Load / Release Store: Assembly with LDAR/STLR
 //   - RMW ops: Assembly with ordered LSE instructions
-//   - 128-bit: LDXP/STXP (default) or CASP with -tags=lse2 (ARMv8.4+)
+//   - 128-bit: LSE2 LDP/STP and LSE CASP, or exclusive pairs with -tags=atomix_llsc
 //
 // The assembly uses these LSE instruction patterns:
 //   - SWPA/SWPL/SWPAL: Swap with acquire/release/acq-rel
@@ -380,10 +380,8 @@ func CaxPointerAcqRel(addr *unsafe.Pointer, old, new unsafe.Pointer) unsafe.Poin
 // 128-bit Operations
 // =============================================================================
 
-// 128-bit operations require 16-byte alignment.
-//
-// Default implementation uses LDXP/STXP (load-exclusive/store-exclusive pairs).
-// With -tags=lse2, uses CASP instruction (ARMv8.4+ with LSE2).
+// 128-bit operations require 16-byte alignment. LSE2 pair loads and stores
+// require Normal memory with Inner and Outer Write-Back cacheability.
 
 //go:noescape
 func LoadUint128Relaxed(addr *[16]byte) (lo, hi uint64)

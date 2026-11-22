@@ -31,8 +31,8 @@ const (
 	// atomic operation. Use when loading a pointer before dereferencing it.
 	Acquire
 
-	// Release ensures prior operations cannot be reordered after the atomic
-	// operation. Use when publishing data after initialization.
+	// Release orders prior accesses before the atomic operation. Default arm64
+	// 128-bit stores order prior writes. See [Uint128.StoreRelease].
 	Release
 
 	// AcqRel combines Acquire and Release semantics. Use for read-modify-write

@@ -2,49 +2,28 @@
 // Use of this source code is governed by a MIT-style
 // license that can be found in the LICENSE file.
 
-//go:build arm64 && !lse2
+//go:build arm64 && atomix_llsc
 
 #include "textflag.h"
 
-// ARM64 128-bit operations using LL/SC (Load-Link/Store-Conditional).
-//
-// This is the default implementation using LDXP/STXP instructions.
-// LL/SC is 15-18% faster than CASP on Graviton4 due to lower
-// microarchitectural overhead in uncontended cases.
-//
-// For LSE2/CASP implementation, build with -tags=lse2.
-//
-// Instructions used:
-//   LDXP  - Load exclusive pair (relaxed)
-//   LDAXP - Load acquire exclusive pair
-//   STXP  - Store exclusive pair (relaxed)
-//   STLXP - Store release exclusive pair
-//   CLREX - Clear exclusive monitor
-//
-// DMB codes:
-//   $0x9 = ISHLD (acquire barrier)
-//   $0xA = ISHST (release barrier)
-//   $0xB = ISH   (full barrier)
-
-// =============================================================================
-// 128-bit Load operations
-// Use LDXP + CLREX for atomic snapshot without LSE2
-// =============================================================================
-
-// Load relaxed: LDXP + CLREX
+// A pair-exclusive load can tear without FEAT_LSE2. A successful STXP of
+// the observed words validates the snapshot before either load returns.
 TEXT ·LoadUint128Relaxed(SB), NOSPLIT, $0-24
 	MOVD	addr+0(FP), R8
+load128_retry:
 	LDXP	(R8), (R0, R1)
-	CLREX
+	STXP	(R0, R1), (R8), R2
+	CBNZ	R2, load128_retry
 	MOVD	R0, lo+8(FP)
 	MOVD	R1, hi+16(FP)
 	RET
 
-// Load acquire: LDAXP + CLREX
 TEXT ·LoadUint128Acquire(SB), NOSPLIT, $0-24
 	MOVD	addr+0(FP), R8
+load128_acq_retry:
 	LDAXP	(R8), (R0, R1)
-	CLREX
+	STXP	(R0, R1), (R8), R2
+	CBNZ	R2, load128_acq_retry
 	MOVD	R0, lo+8(FP)
 	MOVD	R1, hi+16(FP)
 	RET
@@ -232,7 +211,7 @@ cas128_ar_llsc_fail:
 // 128-bit CAX (Compare-And-Exchange returning old value) operations
 // =============================================================================
 
-// CAX 128-bit relaxed: LDXP + compare + STXP
+// Validate the observed pair on mismatch as well as on a successful exchange.
 TEXT ·CaxUint128Relaxed(SB), NOSPLIT, $0-56
 	MOVD	addr+0(FP), R8
 	MOVD	oldLo+8(FP), R4
@@ -242,16 +221,19 @@ TEXT ·CaxUint128Relaxed(SB), NOSPLIT, $0-56
 cax128_llsc_retry:
 	LDXP	(R8), (R0, R1)
 	CMP	R0, R4
-	BNE	cax128_llsc_done
+	BNE	cax128_llsc_mismatch
 	CMP	R1, R5
-	BNE	cax128_llsc_done
+	BNE	cax128_llsc_mismatch
 	STXP	(R2, R3), (R8), R6
 	CBNZ	R6, cax128_llsc_retry
 cax128_llsc_done:
-	CLREX
 	MOVD	R0, lo+40(FP)
 	MOVD	R1, hi+48(FP)
 	RET
+cax128_llsc_mismatch:
+	STXP	(R0, R1), (R8), R6
+	CBNZ	R6, cax128_llsc_retry
+	B	cax128_llsc_done
 
 // CAX 128-bit acquire: LDAXP + compare + STXP
 TEXT ·CaxUint128Acquire(SB), NOSPLIT, $0-56
@@ -263,16 +245,19 @@ TEXT ·CaxUint128Acquire(SB), NOSPLIT, $0-56
 cax128_acq_llsc_retry:
 	LDAXP	(R8), (R0, R1)
 	CMP	R0, R4
-	BNE	cax128_acq_llsc_done
+	BNE	cax128_acq_llsc_mismatch
 	CMP	R1, R5
-	BNE	cax128_acq_llsc_done
+	BNE	cax128_acq_llsc_mismatch
 	STXP	(R2, R3), (R8), R6
 	CBNZ	R6, cax128_acq_llsc_retry
 cax128_acq_llsc_done:
-	CLREX
 	MOVD	R0, lo+40(FP)
 	MOVD	R1, hi+48(FP)
 	RET
+cax128_acq_llsc_mismatch:
+	STXP	(R0, R1), (R8), R6
+	CBNZ	R6, cax128_acq_llsc_retry
+	B	cax128_acq_llsc_done
 
 // CAX 128-bit release: LDXP + compare + STLXP
 TEXT ·CaxUint128Release(SB), NOSPLIT, $0-56
@@ -284,16 +269,19 @@ TEXT ·CaxUint128Release(SB), NOSPLIT, $0-56
 cax128_rel_llsc_retry:
 	LDXP	(R8), (R0, R1)
 	CMP	R0, R4
-	BNE	cax128_rel_llsc_done
+	BNE	cax128_rel_llsc_mismatch
 	CMP	R1, R5
-	BNE	cax128_rel_llsc_done
+	BNE	cax128_rel_llsc_mismatch
 	STLXP	(R2, R3), (R8), R6
 	CBNZ	R6, cax128_rel_llsc_retry
 cax128_rel_llsc_done:
-	CLREX
 	MOVD	R0, lo+40(FP)
 	MOVD	R1, hi+48(FP)
 	RET
+cax128_rel_llsc_mismatch:
+	STXP	(R0, R1), (R8), R6
+	CBNZ	R6, cax128_rel_llsc_retry
+	B	cax128_rel_llsc_done
 
 // CAX 128-bit acqrel: LDAXP + compare + STLXP
 TEXT ·CaxUint128AcqRel(SB), NOSPLIT, $0-56
@@ -305,13 +293,16 @@ TEXT ·CaxUint128AcqRel(SB), NOSPLIT, $0-56
 cax128_ar_llsc_retry:
 	LDAXP	(R8), (R0, R1)
 	CMP	R0, R4
-	BNE	cax128_ar_llsc_done
+	BNE	cax128_ar_llsc_mismatch
 	CMP	R1, R5
-	BNE	cax128_ar_llsc_done
+	BNE	cax128_ar_llsc_mismatch
 	STLXP	(R2, R3), (R8), R6
 	CBNZ	R6, cax128_ar_llsc_retry
 cax128_ar_llsc_done:
-	CLREX
 	MOVD	R0, lo+40(FP)
 	MOVD	R1, hi+48(FP)
 	RET
+cax128_ar_llsc_mismatch:
+	STXP	(R0, R1), (R8), R6
+	CBNZ	R6, cax128_ar_llsc_retry
+	B	cax128_ar_llsc_done

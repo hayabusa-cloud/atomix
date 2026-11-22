@@ -5,6 +5,7 @@
 package atomix_test
 
 import (
+	"runtime"
 	"sync"
 	"testing"
 
@@ -507,9 +508,35 @@ func TestUint128CompareAndSwap(t *testing.T) {
 		t.Fatalf("CAS result: got (%d, %d), want (30, 40)", lo, hi)
 	}
 
-	// Failed CAS
-	if a.CompareAndSwap(10, 20, 50, 60) {
-		t.Fatal("CAS should fail")
+	if a.CompareAndSwap(30, 20, 50, 60) || a.CompareAndSwap(10, 40, 50, 60) {
+		t.Fatal("CAS succeeded with only one matching word")
+	}
+}
+
+func TestUint128CoherentSnapshot(t *testing.T) {
+	if runtime.GOARCH != "arm64" && runtime.GOARCH != "amd64" {
+		t.Skip("requires atomic 128-bit loads and stores")
+	}
+	_, a := atomix.PlaceAlignedUint128(make([]byte, 32), 0)
+	a.Store(0, ^uint64(0))
+
+	const samples = 8192
+	var writer sync.WaitGroup
+	writer.Go(func() {
+		for n := uint64(1); n <= samples; n++ {
+			a.Store(n, ^n)
+		}
+	})
+	defer writer.Wait()
+
+	for range samples {
+		if lo, hi := a.LoadAcquire(); hi != ^lo {
+			t.Fatalf("LoadAcquire returned a torn pair (%#x, %#x)", lo, hi)
+		}
+		// (0, 0) never occurs. A failed exchange must return a complete pair.
+		if lo, hi := a.CompareExchangeAcqRel(0, 0, 0, 0); hi != ^lo {
+			t.Fatalf("CompareExchangeAcqRel returned a torn pair (%#x, %#x)", lo, hi)
+		}
 	}
 }
 

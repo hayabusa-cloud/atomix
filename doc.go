@@ -16,7 +16,7 @@
 //
 //   - [Relaxed]: Only atomicity guaranteed; no ordering constraints
 //   - [Acquire]: Subsequent operations cannot reorder before the load
-//   - [Release]: Prior operations cannot reorder after the store
+//   - [Release]: Orders prior accesses before the store (prior writes for default arm64 128-bit stores)
 //   - [AcqRel]: Acquire + Release; for read-modify-write operations
 //
 // Unlike sync/atomic which provides sequential consistency, this package
@@ -80,8 +80,7 @@
 //
 // Primary (native atomic instructions):
 //   - amd64: LOCK-prefixed instructions; TSO provides acquire/release
-//   - arm64: LSE atomics under the ARMv8.4+ package baseline for 32/64-bit;
-//     128-bit LL/SC is documented for ARMv8.1+, and CASP for ARMv8.4+ with LSE2
+//   - arm64: LSE for 32/64-bit atomics and CASP, LSE2 for atomic pair loads and stores
 //
 // Secondary (native with limitations):
 //   - riscv64: AMO instructions with .aq/.rl suffixes
@@ -91,13 +90,15 @@
 //
 // # ARM64 128-bit Build Options
 //
-// ARM64 128-bit atomics support two implementations via build tags:
+// Default arm64 builds target FEAT_LSE2. Pair loads and stores use LDP/STP
+// on 16-byte-aligned Normal memory with Inner and Outer Write-Back cacheability,
+// as on the Go heap. Compare-and-swap uses LSE CASP with the requested ordering.
+// A 128-bit release store publishes earlier writes with DMB ISHST. To order an
+// earlier read before the store, use an acquire load for that read.
 //
-//   - Default (!lse2): LL/SC using LDXP/STXP instructions, documented for ARMv8.1+
-//   - -tags=lse2: CASP instruction (LSE2)
-//
-// LL/SC uses the LDXP/STXP pair and is documented for ARMv8.1+.
-// CASP uses a single instruction on ARMv8.4+ hardware with LSE2.
+// On older arm64 CPUs with LSE, build with -tags=atomix_llsc. This backend
+// requires writable storage because loads and failed compare-exchanges can
+// write back the observed pair.
 //
 // # 128-bit Atomics
 //
@@ -106,7 +107,7 @@
 //
 // True 128-bit atomicity is only available on:
 //   - amd64: LOCK CMPXCHG16B
-//   - arm64: LDXP/STXP (default) or CASP (-tags=lse2)
+//   - arm64: LDP/STP and CASP by default, or exclusive pairs with -tags=atomix_llsc
 //
 // riscv64 and loong64 emulate 128-bit operations through low-word LR/SC
 // (riscv64) or LL/SC (loong64) and may exhibit torn reads. Generic fallback
