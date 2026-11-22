@@ -34,7 +34,7 @@ val := atomix.Acquire.LoadInt32(&flags)
 go get code.hybscloud.com/atomix
 ```
 
-**要求:** Go 1.26+
+**要求:** Go 1.27+
 
 ## 内存序
 
@@ -289,7 +289,7 @@ atomix 提供定制的 Go 编译器，直接生成内联原子指令代替函数
 ### 编译器工作流
 
 ```bash
-# 安装定制的内联编译器
+# 安装最新版 Atomix 编译器，也可导出 COMPILER_TAG 以选择特定版本
 make install-compiler
 
 # 使用内联编译器构建
@@ -322,17 +322,18 @@ make verify
 
 ### 手动编译器安装
 
-如果不使用 Makefile，可手动安装：
+手动构建时，将 `COMPILER_TAG` 设为基于 Go 1.27 或更高版本的 Atomix 编译器发布标签。[编译器发布列表](https://github.com/hayabusa-cloud/go/releases)
 
 ```bash
 # 克隆内联编译器
-git clone --branch atomix https://github.com/hayabusa-cloud/go.git ~/github.com/go
+sdk="$HOME/sdk/$COMPILER_TAG"
+git clone --branch "$COMPILER_TAG" --depth 1 https://github.com/hayabusa-cloud/go.git "$sdk"
 
 # 构建编译器
-cd ~/github.com/go/src && ./make.bash
+(cd "$sdk/src" && ./make.bash)
 
 # 用于 atomix
-GOROOT=~/github.com/go ~/github.com/go/bin/go build ./...
+GOTOOLCHAIN=local GOROOT="$sdk" "$sdk/bin/go" build ./...
 ```
 
 详细实现文档见 [intrinsics.md](./intrinsics.md)。

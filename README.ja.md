@@ -34,7 +34,7 @@ val := atomix.Acquire.LoadInt32(&flags)
 go get code.hybscloud.com/atomix
 ```
 
-**動作要件:** Go 1.26+
+**動作要件:** Go 1.27+
 
 ## メモリオーダリング
 
@@ -289,7 +289,7 @@ atomix はカスタマイズされた Go コンパイラを提供し、関数呼
 ### コンパイラワークフロー
 
 ```bash
-# 組み込み関数対応コンパイラをインストール
+# 最新版の Atomix コンパイラをインストール。特定のリリースを使う場合は COMPILER_TAG をエクスポート
 make install-compiler
 
 # 組み込み関数対応コンパイラでビルド
@@ -322,17 +322,18 @@ make verify
 
 ### 手動コンパイラセットアップ
 
-Makefile を使用しない場合の手動セットアップ：
+手動でビルドする場合は、Go 1.27 以降をベースにした Atomix コンパイラのリリースタグを `COMPILER_TAG` に設定する。[コンパイラのリリース一覧](https://github.com/hayabusa-cloud/go/releases)
 
 ```bash
 # 組み込み関数対応コンパイラをクローン
-git clone --branch atomix https://github.com/hayabusa-cloud/go.git ~/github.com/go
+sdk="$HOME/sdk/$COMPILER_TAG"
+git clone --branch "$COMPILER_TAG" --depth 1 https://github.com/hayabusa-cloud/go.git "$sdk"
 
 # コンパイラをビルド
-cd ~/github.com/go/src && ./make.bash
+(cd "$sdk/src" && ./make.bash)
 
 # atomix で使用
-GOROOT=~/github.com/go ~/github.com/go/bin/go build ./...
+GOTOOLCHAIN=local GOROOT="$sdk" "$sdk/bin/go" build ./...
 ```
 
 詳細な実装ドキュメントは [intrinsics.md](./intrinsics.md) を参照。
